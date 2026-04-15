@@ -10,6 +10,7 @@ class PDE():
     operators = set('+*^()')
 
     def __init__(self, pde_txt, u_shape, x_shape, hs = [], h_shapes = []):
+        super().__init__()
         # shape must be tuple/list not array/tensor
         self.pde_txt = pde_txt
         self.u_shape = u_shape
@@ -165,22 +166,3 @@ class PDE():
                 raise RuntimeError
         else:
             raise RuntimeError()
-        
-
-class TensorNetwork():
-    def __init__(self, bond_order, pde, is_contravariants = None):
-        self.bond_order = bond_order
-        self.pde = pde
-        self.is_contravariants = is_contravariants
-
-
-    def parse(self, ):
-        
-        pass
-
-    @classmethod
-    def from_parser(cls, pde_txt, u_shape, x_shape, is_contravariants = None):
-        return cls()
-
-if __name__ == '__main__':
-    print(PDE.parse('5 * 2 + 8 + -10 + (7 + 5 + 6 * h_2 * u_3) * x_0_1 * D[u, x_0] * -5 * 6'))

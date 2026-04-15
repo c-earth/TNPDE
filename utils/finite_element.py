@@ -2,6 +2,8 @@ from math import comb
 import numpy as np
 from scipy import integrate
 
+from utils.tensor_network import TensorNetwork
+
 
 class Basis():
     '''
@@ -195,23 +197,23 @@ class FiniteElement():
     Finite element manager of triangulation domains
     '''
     
-    def __init__(self, solver, triangulation, domain_rank = 1, basis_class = LagrangeBasis, bcs = None):
+    def __init__(self, solver, pde, triangulation, bond_order = 1, domain_rank = 1, basis_class = LagrangeBasis, is_contravariants = None):
         super().__init__()
         
         self.triangulation = triangulation
+        self.bond_order = bond_order
         self.domain_rank = domain_rank
 
         self.basis = basis_class(self.triangulation.d, domain_rank)
-
-        self.bcs = bcs
+        self.is_contravariants = is_contravariants
 
         self.d = self.triangulation.d
         self.n = len(self.triangulation.simplices)
 
         self.solver = solver(self.d)
+        self.pde = pde
 
-        if self.bcs is not None:
-            assert len(self.bcs) == np.prod(self.triangulation.neighbors.shape)
+        self.tensor_network = TensorNetwork(self.bond_order, self.pde, self.is_contravariants)
 
         self.domain_derivatives = self.get_domain_derivatives()
 
