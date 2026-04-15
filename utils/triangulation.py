@@ -52,6 +52,12 @@ class Delaunay1D():
         self.neighbors = np.array([list(range(1, len(self.points) + 1)), list(range(-1, len(self.points) - 1))])
         self.neighbors[-1, 0] = -1
 
+    def find_simplex(self, x):
+        for i, idx in enumerate(self.idxs):
+            if x <= self.points[idx]:
+                return i - 1
+        return -1    
+
 
 class Triangulation():
     '''
@@ -95,4 +101,8 @@ class Triangulation():
     @property
     def neighbors(self):
         return self.delaunay.neighbors
+    
+
+    def find_simplex(self, x):
+        return self.delaunay.find_simplex(x)
     

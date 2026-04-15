@@ -1,0 +1,186 @@
+class PDE():
+    '''
+    `pde_txt` example:
+    1. 5: `5`
+    2. 8x: `8*x_0`
+    3. du/dx: `D[u,x_0]`
+    5. u+9du/dy: `u+9*D[u,x_1]`
+    6. 8(u+x-y): `8*(u+x_0+-1*y)`
+    '''
+    operators = set('+*^()')
+
+    def __init__(self, pde_txt, u_shape, x_shape, hs = [], h_shapes = []):
+        # shape must be tuple/list not array/tensor
+        self.pde_txt = pde_txt
+        self.u_shape = u_shape
+        self.x_shape = x_shape
+        self.hs = hs
+        self.h_shapes = h_shapes
+        self.pde = self.parse(self.pde_txt)
+        assert self.u_shape == self.get_shape(self.pde)
+
+    @classmethod
+    def parse_element(cls, ele_txt):
+        try:
+            ele = float(ele_txt)
+        except ValueError:
+            if ele_txt[0:2] == 'D[' and ele_txt[-1] == ']':
+                arguments = ele_txt[2:-1].split(',')
+                ele = ['D'] + [cls.parse_element(argument) for argument in arguments]
+            elif '_' in ele_txt:
+                ele = ele_txt.split('_')
+                ele[1:] = [int(e) for e in ele[1:]]
+            else:
+                ele = ele_txt
+        return ele
+    
+    @classmethod
+    def clean_parse(cls, priority_out):
+        if type(priority_out) == float:
+            return priority_out
+        
+        elif priority_out[0] == '+':
+            clean_out = ['+']
+            c = 0.0
+            for p in priority_out[1:]:
+                p = cls.clean_parse(p)
+                if type(p) == float:
+                    c += p
+                else:
+                    clean_out.append(p)
+            if c != 0.0:
+                clean_out.append(c)
+            
+            if len(clean_out) == 1:
+                return c
+            elif len(clean_out) == 2:
+                return clean_out[-1]
+            else:
+                return clean_out
+            
+        elif priority_out[0] == '*':
+            clean_out = ['*']
+            c = 1.0
+            for p in priority_out[1:]:
+                p = cls.clean_parse(p)
+                if type(p) == float:
+                    c *= p
+                else:
+                    clean_out.append(p)
+            if c != 1.0:
+                clean_out.append(c)
+
+            if len(clean_out) == 1:
+                return c
+            elif len(clean_out) == 2:
+                return clean_out[-1]
+            else:
+                return clean_out
+        else:
+            return priority_out
+
+    @classmethod
+    def parse(cls, pde_txt):
+        pde_txt = pde_txt.replace(' ', '')
+        if pde_txt == '':
+            return []
+        elif set(pde_txt).intersection(cls.operators):
+            part = ''
+            op = 0
+            out = []
+            for c in pde_txt:
+                if op == 1 and c == ')':
+                    op = 0
+                    out.append(cls.parse(part))
+                    part = ''
+                elif op == 0:
+                    if c == '(':
+                        op += 1
+                    elif c == ')':
+                        raise ValueError('not matching parentheses')
+                    elif c in '+*':
+                        if part != '':
+                            out.append(cls.parse_element(part))
+                            part = ''
+                        out.append(c)                        
+                    else:
+                        part += c
+                else:
+                    part += c
+            if part != '':
+                out.append(cls.parse_element(part))
+
+            priority_out = []
+            i = 0
+            while i < len(out):
+                if out[i] == '*':
+                    if priority_out[0] not in ['+', '*']:
+                        priority_out = ['*'] + priority_out + [out[i+1]]
+                    elif priority_out[0] == '+':
+                        if type(priority_out[-1]) == list and priority_out[-1][0] == '*':
+                            priority_out[-1].append(out[i+1])
+                        else:
+                            priority_out[-1] = ['*', priority_out[-1], out[i+1]]
+                    else:
+                        priority_out = ['*'] + priority_out + [out[i+1]]
+                    i += 1
+                elif out[i] == '+':
+                    if priority_out[0] not in ['+', '*']:
+                        priority_out = ['+'] + priority_out
+                    elif priority_out[0] == '*':
+                        priority_out = ['+'] + [priority_out]
+                else:
+                    priority_out.append(out[i])
+                i += 1
+            return cls.clean_parse(priority_out)
+        else:
+            return [cls.parse_element(pde_txt)]
+        
+    def get_shape(self, pde):
+        if type(pde) == float:
+            return tuple()
+        elif pde == 'x':
+            return self.x_shape
+        elif pde == 'u':
+            return self.u_shape
+        elif type(pde) == list:
+            if pde[0] == 'x':
+                return self.x_shape[len(pde) - 1:]
+            elif pde[0] == 'u':
+                return self.u_shape[len(pde) - 1:]
+            elif pde[0] == 'h':
+                h_i_shape = self.h_shapes[pde[1]]
+                return h_i_shape[len(pde) - 2:]
+            elif pde[0] == 'D':
+                assert len(pde) == 3
+                shapes = [self.get_shape(term) for term in pde[1:]]
+                return shape[1] + shape[0]
+            elif pde[0] in '+*':
+                shapes = [self.get_shape(term) for term in pde[1:]]
+                for shape in shapes:
+                    if shape != tuple():
+                        assert shape == shapes[0]
+                return shape[0]
+            else:
+                raise RuntimeError
+        else:
+            raise RuntimeError()
+        
+
+class TensorNetwork():
+    def __init__(self, bond_order, pde, is_contravariants = None):
+        self.bond_order = bond_order
+        self.pde = pde
+        self.is_contravariants = is_contravariants
+
+
+    def parse(self, ):
+        
+        pass
+
+    @classmethod
+    def from_parser(cls, pde_txt, u_shape, x_shape, is_contravariants = None):
+        return cls()
+
+if __name__ == '__main__':
+    print(PDE.parse('5 * 2 + 8 + -10 + (7 + 5 + 6 * h_2 * u_3) * x_0_1 * D[u, x_0] * -5 * 6'))

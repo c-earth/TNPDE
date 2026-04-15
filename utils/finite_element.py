@@ -67,8 +67,8 @@ class Basis():
         if is_coordinate:
             return np.einsum('ij,...j->...i', J, T) + v
         
-        elif is_contravariants is None: # assume contravariant vector
-            return np.einsum('ij,...j->...i', J, T)
+        elif is_contravariants is None: # assume no transformation
+            return T
         
         else:
             assert len(T.shape) >= len(is_contravariants), 'not enough indices'
@@ -195,40 +195,62 @@ class FiniteElement():
     Finite element manager of triangulation domains
     '''
     
-    def __init__(self, solver, triangulation, domain_rank = 1, basis_class = LagrangeBasis, boundary_conditions = None):
+    def __init__(self, solver, triangulation, domain_rank = 1, basis_class = LagrangeBasis, bcs = None):
         super().__init__()
-
         
         self.triangulation = triangulation
         self.domain_rank = domain_rank
 
-        self.bases = basis_class(self.triangulation.d, domain_rank)
+        self.basis = basis_class(self.triangulation.d, domain_rank)
 
-        self.boundary_conditions = boundary_conditions
+        self.bcs = bcs
 
         self.d = self.triangulation.d
         self.n = len(self.triangulation.simplices)
 
         self.solver = solver(self.d)
 
-        if self.boundary_conditions is not None:
-            assert len(self.boundary_conditions) <= np.prod(self.triangulation.neighbors.shape)
+        if self.bcs is not None:
+            assert len(self.bcs) == np.prod(self.triangulation.neighbors.shape)
+
+        self.domain_derivatives = self.get_domain_derivatives()
+
+    def get_domain_derivatives(self):
+        domain_derivatives = []
+        for domain_simplex in self.triangulation.simplices:
+            domain = self.triangulation.points[domain_simplex]
+            derivatives = self.basis.transform(np.transpose(self.basis.derivatives, axes = [1, 2, 0]), domain, to_bary = False, is_contravariants = [False])
+            domain_derivatives.append(np.transpose(derivatives, axes = [2, 0, 1]))
+        return domain_derivatives
+    
+
+    def diff(self, domain_rep, element, dim):
+        return np.einsum('ij,j->i', self.domain_derivatives[element][dim], domain_rep)
+       
+    def tp(self, domain_rep_1, domain_rep_2):
+        return self.basis.tp(domain_rep_1, domain_rep_2)
+    
+
+    def fun2rep(self, fun, is_contravariants = None):
+        rep = []
+        for domain_simplex in self.triangulation.simplices:
+            domain = self.triangulation.points[domain_simplex]
+
+            def element_fun(u):
+                x = self.basis.transform(u, domain, to_bary = False, is_coordinate = True)
+                f = fun(x)
+                return self.basis.transform(f, domain, to_bary = True, is_contravariants = is_contravariants)
+            
+            rep.append(self.basis.element_fun2rep(element_fun))
+        return rep
 
 
-    def basis_diff(self):
-        return
-    
-    def diff(self):
-        return
-    
-    def basis_tp(self):
-        return 
-    
-    def tp(self):
-        return
+    def rep2fun(self, rep, is_contravariants = None):
+        def fun(x):
+            domain_idx = self.triangulation.find_simplex(x)
+            domain = self.triangulation.points[self.triangulation.simplices[domain_idx]]
+            element_fun = self.basis.element_rep2fun(rep[domain_idx])
+            u = self.basis.transform(x, domain, to_bary = True, is_coordinate = True)
+            return self.basis.transform(element_fun(u), domain, to_bary = False, is_contravariants = is_contravariants)
+        return fun
 
-    def fun2rep(self, fun):
-        return np.einsum('ij,j->i', self.inv_basis_overlap, self.basis_fun_overlap(fun))
-    
-    def rep2fun(self, rep):
-        return lambda x: sum([r * basis_fun(x) for r, basis_fun in zip(rep, self.basis_funs)])
