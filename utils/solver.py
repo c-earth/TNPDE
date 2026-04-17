@@ -21,23 +21,24 @@ class Solver():
     def update_dm(self, element):
         raise NotImplementedError
 
-    def add_system(self, neighbors, states, operators, bcs, alpha, random_state = False, seed = None):
+    def add_system(self, neighbors, states, operators, bcs, alpha, random = False):
         n, d = neighbors.shape
         d -= 1
         assert self.d == d
 
         reversed_neighbor_idxs = self.check_neighbors(neighbors)
+
         self.check_states_operators_bcs(states, operators, bcs, neighbors, reversed_neighbor_idxs)
 
         self.n = n
         self.neighbors = neighbors
         self.reversed_neighbor_idxs = reversed_neighbor_idxs
 
-        if random_state:
-            np.random.seed(seed = seed)
+        if random:
             self.states = [np.random.uniform(low = -1, high = 1, size = state.shape) for state in states]
         else:
             self.states = states
+
         self.operators = operators
         self.bcs = bcs
         self.alpha = alpha
@@ -105,6 +106,7 @@ class Solver():
                 starting_direction = 1 - starting_direction
                 next_element = element
             element = next_element
+        return self.states
 
 class DMRG(Solver):
     def __init__(self, *_):

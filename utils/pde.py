@@ -9,13 +9,12 @@ class PDE():
     '''
     operators = set('+*^()')
 
-    def __init__(self, pde_txt, u_shape, x_shape, hs = [], h_shapes = []):
+    def __init__(self, pde_txt, u_shape, x_shape, h_shapes):
         super().__init__()
         # shape must be tuple/list not array/tensor
         self.pde_txt = pde_txt
         self.u_shape = u_shape
         self.x_shape = x_shape
-        self.hs = hs
         self.h_shapes = h_shapes
         self.pde = self.parse(self.pde_txt)
         assert self.u_shape == self.get_shape(self.pde)
@@ -158,7 +157,7 @@ class PDE():
             elif pde[0] == 'D':
                 assert len(pde) == 3
                 shapes = [self.get_shape(term) for term in pde[1:]]
-                return shape[1] + shape[0]
+                return shapes[1] + shapes[0]
             elif pde[0] in '+*':
                 shapes = [self.get_shape(term) for term in pde[1:]]
                 shape_0 = None
@@ -166,7 +165,7 @@ class PDE():
                     if shape != tuple():
                         if shape_0 is None:
                             shape_0 = shapes[0]
-                        assert shape == shapes_0
+                        assert shape == shape_0
                 return shape_0 if shape_0 is not None else tuple()
             else:
                 raise RuntimeError()

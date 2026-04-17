@@ -1,6 +1,7 @@
 from math import comb
 import numpy as np
 from scipy import integrate
+import matplotlib.pyplot as plt
 
 from utils.tensor_network import TensorNetwork
 
@@ -130,12 +131,53 @@ class Basis():
     
     def element_rep2fun(self, rep):
         return lambda x: sum([r * basis_fun(x) for r, basis_fun in zip(rep, self.basis_funs)])
+    
+
+    def visualize(self):
+        if self.d == 1:
+            x = np.linspace(0, 1, 20)
+            plt.figure()
+            for fun in self.basis_funs:
+                plt.plot(x, fun(x))
+            plt.show()
+        elif self.d == 2:
+            xs, ys = np.meshgrid(np.linspace(0, 1, 20), np.linspace(0, 1, 20))
+            fig, axs = plt.subplots(self.domain_rank + 1, self.domain_rank + 1, figsize = ((self.domain_rank + 1)*2, (self.domain_rank + 1)*2))
+            for ax in axs.ravel():
+                ax.set_axis_off()
+            for i, fun in enumerate(self.basis_funs):
+                ax = axs[*self.order2bcp[i]]
+
+                zs = np.array([[fun(point)[0] if point[0] >= 0 and point[1] >= 0 and np.sum(point) <= 1 else 0 for point in zip(xr, yr)] for xr, yr in zip(xs, ys)])
+                zs = zs.reshape((20, 20)).T
+                ax.imshow(zs, cmap = 'viridis', interpolation = 'nearest')
+                ax.get_xaxis().set_ticks([])
+                ax.get_yaxis().set_ticks([])
+                
+            fig.tight_layout()
+            fig.show()
+        else:
+            raise NotImplementedError()
 
 
 class LagrangeBasis(Basis):
     '''
     Lagrange orthogonal polynomial basis
     '''
+    def __init__(self, d, domain_rank, mock = False):
+        if not mock:
+            super().__init__(d, domain_rank)
+        else:
+            self.d = d
+            self.domain_rank = domain_rank
+
+            self.rank = self.get_rank()
+            self.order2bcp = self.get_order2bcp(self.d, self.domain_rank)
+            assert self.rank == len(self.order2bcp)
+
+            self.basis_funs = self.get_basis_funs()
+
+
     def get_basis_fun(self, bcp):
         def fun(x):
             x = self.domain_rank * np.array(x).reshape((-1, self.d))
@@ -197,27 +239,11 @@ class FiniteElement():
     Finite element manager of triangulation domains
     '''
     
-    def __init__(self, solver, pde, triangulation, bond_order = 1, domain_rank = 1, basis_class = LagrangeBasis, is_contravariants = None):
+    def __init__(self, triangulation, basis):
         super().__init__()
-        
         self.triangulation = triangulation
-        self.bond_order = bond_order
-        self.domain_rank = domain_rank
-
-        self.basis = basis_class(self.triangulation.d, domain_rank)
-        self.is_contravariants = is_contravariants
-
-        self.d = self.triangulation.d
-        self.n = len(self.triangulation.simplices)
-
-        self.solver = solver(self.d)
-        self.pde = pde
+        self.basis = basis
         self.domain_derivatives = self.get_domain_derivatives()
-
-        self.basic_tensors = dict()
-        self.basic_tensors['D'] = self.domain_derivatives
-
-        self.tensor_network = TensorNetwork(self.n, self.basis.rank, self.bond_order, self.triangulation.neighbors, self.pde, self.basic_tensors, self.is_contravariants)
 
     def get_domain_derivatives(self):
         domain_derivatives = []
@@ -257,3 +283,4 @@ class FiniteElement():
             u = self.basis.transform(x, domain, to_bary = True, is_coordinate = True)
             return self.basis.transform(element_fun(u), domain, to_bary = False, is_contravariants = is_contravariants)
         return fun
+    

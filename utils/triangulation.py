@@ -1,4 +1,6 @@
 import numpy as np
+import matplotlib.pyplot as plt
+
 from scipy.spatial import Delaunay
 
 
@@ -106,3 +108,16 @@ class Triangulation():
     def find_simplex(self, x):
         return self.delaunay.find_simplex(x)
     
+    def visualize(self):
+        if self.d == 1:
+            plt.figure()
+            plt.plot(self.points, np.zeros(self.points.shape))
+            plt.plot(self.points, np.zeros(self.points.shape), 'o')
+            plt.show()
+        elif self.d == 2:
+            plt.figure()
+            plt.triplot(self.points[:, 0], self.points[:, 1], self.simplices)
+            plt.plot(self.points[:, 0], self.points[:, 1], 'o')
+            plt.show()
+        else:
+            raise NotImplementedError()

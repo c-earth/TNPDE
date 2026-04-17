@@ -157,6 +157,8 @@ class TensorNetwork():
         self.is_contravariants = is_contravariants
         self.states, self.operators, self.bcs = [], [], []
 
+        self.translate()
+
 
     def translate_element(self, pde, element):
         if type(pde) == list:
