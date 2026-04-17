@@ -40,6 +40,9 @@ class PDE():
         if type(priority_out) == float:
             return priority_out
         
+        elif type(priority_out[0]) == float:
+            return priority_out[0]
+        
         elif priority_out[0] == '+':
             clean_out = ['+']
             c = 0.0
@@ -135,7 +138,7 @@ class PDE():
                 i += 1
             return cls.clean_parse(priority_out)
         else:
-            return [cls.parse_element(pde_txt)]
+            return cls.clean_parse([cls.parse_element(pde_txt)])
         
     def get_shape(self, pde):
         if type(pde) == float:
@@ -158,11 +161,14 @@ class PDE():
                 return shape[1] + shape[0]
             elif pde[0] in '+*':
                 shapes = [self.get_shape(term) for term in pde[1:]]
+                shape_0 = None
                 for shape in shapes:
                     if shape != tuple():
-                        assert shape == shapes[0]
-                return shape[0]
+                        if shape_0 is None:
+                            shape_0 = shapes[0]
+                        assert shape == shapes_0
+                return shape_0 if shape_0 is not None else tuple()
             else:
-                raise RuntimeError
+                raise RuntimeError()
         else:
             raise RuntimeError()

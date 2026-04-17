@@ -13,6 +13,14 @@ class Solver():
         self.bcs = []
         self.alpha = 0
 
+        self.reset_dm()
+
+    def reset_dm(self):
+        raise NotImplementedError
+        
+    def update_dm(self, element):
+        raise NotImplementedError
+
     def add_system(self, neighbors, states, operators, bcs, alpha, random_state = False, seed = None):
         n, d = neighbors.shape
         d -= 1
@@ -33,6 +41,8 @@ class Solver():
         self.operators = operators
         self.bcs = bcs
         self.alpha = alpha
+
+        self.reset_dm()
 
     def check_neighbors(self, neighbors):
         reversed_neighbor_idxs = - np.ones(neighbors.shape)
@@ -62,17 +72,43 @@ class Solver():
                 else:
                     assert list(state_bc.shape) == 2 * [state.shape[0], states[element_neighbor].shape[0]]
 
+    def get_ansatz(self, element):
+        raise NotImplementedError
+    
+    def get_bcs_regularizer(self, element):
+        raise NotImplementedError
+
+    def get_optimization_function(self, element):
+        shape = self.states[element].shape
+        return lambda state: self.get_ansatz(element)(state.reshape(shape)) + self.alpha * self.get_bcs_regularizer(element)(state.reshape(shape))
+    
+    def step(self, element):
+        shape = self.states[element].shape
+        fun = self.get_optimization_function(element)
+        result = minimize(fun, self.states[element].reshape(-1))
+        if not result.success:
+            print(result.message)
+            raise RuntimeError()
+        self.states[element] = result.x.reshape(shape)
+        self.update_dm(element)
+    
+    def solve(self, rounds, starting_element = 0, starting_direction = 0):
+        step = 0
+        element = starting_element
+        starting_direction = starting_direction
+        while step < 2 * rounds * self.n:
+            self.step(element)
+
+            step += 1
+            next_element = self.neighbors[element][starting_direction]
+            if next_element == -1:
+                starting_direction = 1 - starting_direction
+                next_element = element
+            element = next_element
+
 class DMRG(Solver):
-    def __init__(self, d):
-        super().__init__(d)
-        assert self.d == 1
-
-        self.reset_dm()
-
-    def add_system(self, *args):
-        super().add_system(*args)
-
-        self.reset_dm()
+    def __init__(self, *_):
+        super().__init__(1)
 
     def reset_dm(self):
         self.dm = {True: dict(), 
@@ -146,31 +182,3 @@ class DMRG(Solver):
                 out += np.einsum('ln,ln->', neighbor_contractions[1 - neighbor_idx], bc_contraction)
             return out
         return bcs_regularizer
-    
-    def get_optimization_function(self, element):
-        shape = self.states[element].shape
-        return lambda state: self.get_ansatz(element)(state.reshape(shape)) + self.alpha * self.get_bcs_regularizer(element)(state.reshape(shape))
-    
-    def step(self, element):
-        shape = self.states[element].shape
-        fun = self.get_optimization_function(element)
-        result = minimize(fun, self.states[element].reshape(-1))
-        if not result.success:
-            print(result.message)
-            raise RuntimeError()
-        self.states[element] = result.x.reshape(shape)
-        self.update_dm(element)
-    
-    def solve(self, rounds, starting_element = 0, starting_direction = 0):
-        step = 0
-        element = starting_element
-        starting_direction = starting_direction
-        while step < 2 * rounds * self.n:
-            self.step(element)
-
-            step += 1
-            next_element = self.neighbors[element][starting_direction]
-            if next_element == -1:
-                starting_direction = 1 - starting_direction
-                next_element = element
-            element = next_element

@@ -42,7 +42,7 @@ class Basis():
         else:
             for r in range(domain_rank + 1):
                 sub_order2bcp = cls.get_order2bcp(d - 1, domain_rank - r)
-                order2bcps.append(np.concatenate([r * np.ones((sub_order2bcp.shape[0], 1)), sub_order2bcp], axis = 1))
+                order2bcps.append(np.concatenate([r * np.ones((sub_order2bcp.shape[0], 1), dtype = int), sub_order2bcp], axis = 1))
         return np.concatenate(order2bcps, axis = 0)
 
     def get_standard_domain(self):
@@ -91,7 +91,7 @@ class Basis():
     def overlap(self, *funss):
         overlap_tensor = np.empty([len(funs) for funs in funss], dtype = float)
         for idxs in np.ndindex(overlap_tensor.shape):
-            overlap_tensor[idxs] = integrate.nquad(lambda *x: np.prod([funss[i][idx](x) for i, idx in enumerate(idxs)]), self.ranges)
+            overlap_tensor[idxs] = integrate.nquad(lambda *x: np.prod([funss[i][idx](x) for i, idx in enumerate(idxs)]), self.ranges)[0]
         return overlap_tensor
     
     
@@ -189,7 +189,7 @@ class LagrangeBasis(Basis):
         return der
     
     def get_basis_ders(self):
-        return [[self.get_basis_der(bcp, dim) for bcp in self.order2bcp] for dim in self.d]
+        return [[self.get_basis_der(bcp, dim) for bcp in self.order2bcp] for dim in range(self.d)]
         
 
 class FiniteElement():
@@ -212,10 +212,12 @@ class FiniteElement():
 
         self.solver = solver(self.d)
         self.pde = pde
-
-        self.tensor_network = TensorNetwork(self.bond_order, self.pde, self.is_contravariants)
-
         self.domain_derivatives = self.get_domain_derivatives()
+
+        self.basic_tensors = dict()
+        self.basic_tensors['D'] = self.domain_derivatives
+
+        self.tensor_network = TensorNetwork(self.n, self.basis.rank, self.bond_order, self.triangulation.neighbors, self.pde, self.basic_tensors, self.is_contravariants)
 
     def get_domain_derivatives(self):
         domain_derivatives = []
@@ -255,4 +257,3 @@ class FiniteElement():
             u = self.basis.transform(x, domain, to_bary = True, is_coordinate = True)
             return self.basis.transform(element_fun(u), domain, to_bary = False, is_contravariants = is_contravariants)
         return fun
-
