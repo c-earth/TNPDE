@@ -104,6 +104,23 @@ class Triangulation():
     def neighbors(self):
         return self.delaunay.neighbors
     
+    @property
+    def reversed_neighbor_idxs(self):
+        reversed_neighbor_idxs = - np.ones(self.neighbors.shape)
+        for element, element_neighbors in enumerate(self.neighbors):
+            for i, element_neighbor in enumerate(element_neighbors):
+                if element_neighbor != -1:
+                    found = False
+                    for reversed_neighbor_idx, reversed_neighbor in enumerate(self.neighbors[element_neighbor]):
+                        if element == reversed_neighbor:
+                            found = True
+                            reversed_neighbor_idxs[element, i] = reversed_neighbor_idx
+                            break
+                    if not found:
+                        raise ValueError(f'not matching neighbor for element {element}')
+
+        return reversed_neighbor_idxs
+    
 
     def find_simplex(self, x):
         return self.delaunay.find_simplex(x)

@@ -2,7 +2,7 @@ import numpy as np
 import string
 
 
-class TensorUnit():
+class TensorUnit_0():
     def __init__(self, tensor, top_rank, bot_rank):
         super().__init__()
         self.tensor = tensor
@@ -141,55 +141,134 @@ class TensorUnit():
         for s, tensor_unit in zip(slices, tensor_units):
             sum_tensor[s] = tensor_unit.tensor
 
-        return cls(sum_tensor, tensor_units[0].top_rank, 1)
-        
+        return cls(sum_tensor, tensor_units[0].top_rank, 1)  
 
-class TensorNetwork():
-    def __init__(self, n, basis_rank, bond_order, neighbors, pde, basic_tensors, is_contravariants = None):
+
+
+class TensorUnit():
+    def __init__(self, tensor):
         super().__init__()
 
-        self.n = n
-        self.basis_rank = basis_rank
-        self.bond_order = bond_order
-        self.neighbors = neighbors
-        self.pde = pde
-        self.basic_tensors = basic_tensors
-        self.is_contravariants = is_contravariants
-        self.states, self.operators, self.bcs = [], [], []
+        self.tensor = tensor
 
-        self.translate()
+    @property
+    def shape(self):
+        return self.tensor.shape
+    
+    @property
+    def rank(self):
+        return self.shape
 
+    def contract(self, other, self_indices, other_indices):
+        assert len(self_indices) == len(other_indices)
+        c = len(self_indices)
 
-    def translate_element(self, pde, element):
-        if type(pde) == list:
-            if pde[0] == '*':
-                pass
-            elif pde[0] == '+':
-                pass
-            elif pde[0] == 'D':
-                if type(pde[2]) == list and pde[2][0] == 'x':
-                    D_tensor = self.basic_tensors['D'][pde[2][1:]]
-                elif pde[2] == 'x':
-                    D_tensor = self.basic_tensors['D']
-                else:
-                    raise RuntimeError()
-                
-                D = TensorUnit(D_tensor, self.basis_rank, 1)
-                if pde[1] != 'u':
-                    return self.translate(pde[1]).cap(D)
-                else:
-                    return D
-                
-            elif pde[0] == 'x':
-                return TensorUnit(self.basic_tensors['x'][pde[1]][element], 1, 0)
-            elif pde[0] == 'h':
-                return TensorUnit(self.basic_tensors['h'][pde[1]][element], 1, 0)
+        tmp_self = np.moveaxis(self.tensor, self_indices, list(range(-c, 0)))
+        tmp_other = np.moveaxis(other.tensor, other_indices, list(range(c)))
+
+        contracted_tensor = np.tensordot(tmp_self, tmp_other, c)
+        return self.__class__(contracted_tensor)
+    
+    def extend(self, *others, indices):
+        for other in others:
+            assert self.rank == other.rank
+
+        shape = []
+        self_slice = []
+        others_slice = [[]] * len(others)
+        for i, self_s in enumerate(self.shape):
+            if i in indices:
+                s = self_s
+                self_slice.append(slice(None, self_s))
+                for j, other in enumerate(others):
+                    new_s = s + other.shape[i]
+                    others_slice[j].append(slice(s, new_s))
+                    s = new_s
             else:
-                raise RuntimeError
-            
-        else:
-            raise RuntimeError
+                shape.append(self_s)
+                self_slice.append(slice(None))
+                for j, other in enumerate(others):
+                    assert self_s == other.shape[i]
+                    others_slice[j].append(slice(None))
+        
+        extended_tensor = np.zeros(shape)
+        extended_tensor[self_slice] = self.tensor
+        for j, other in enumerate(others):
+            extended_tensor[others_slice[j]] = other.tensor
 
-    def translate(self):
-        for element in range(self.n):
-            self.translate_element(self.pde, element)
+        return self.__class__(extended_tensor)
+    
+    def merge_indices(self, merge_list):
+        permutation = sum(merge_list, start = [])
+        assert len(permutation) == self.rank
+        assert set(permutation) == set(range(self.rank))
+
+        shape = [np.prod([self.shape[idx] for idx in merge_idxs]) for merge_idxs in merge_list]
+        tmp_self = np.moveaxis(self.tensor, permutation, list(range(self.rank)))
+
+        merge_indices_tensor = tmp_self.reshape(shape)
+
+        return self.__class__(merge_indices_tensor)
+
+class TensorPDE(TensorUnit):
+    def __init__(self, tensor, top_rank, lat_ranks, bot_rank):
+        super().__init__(tensor)
+
+        self.top_rank = top_rank
+        self.lat_ranks = lat_ranks
+        self.bot_rank = bot_rank
+
+        assert self.rank == self.top_rank + sum(self.lat_ranks) + self.bot_rank
+
+    @classmethod
+    def from_pde(cls, pde, domain_derivatives_list, domain_tp_reduce, hs):
+        args = [domain_derivatives_list, domain_tp_reduce, hs]
+        if type(pde) == float:
+            return cls()
+        elif type(pde) == str:
+            if pde == 'x':
+                return slice(None)
+
+        elif type(pde) == list:
+            if pde[0] == 'u':
+                domain_derivatives = domain_derivatives_list[len(pde) - 1]
+                s = [slice(None)] + [slice(None) if x is None else x for x in pde[1:]]
+                return domain_derivatives[s]
+            elif pde[0] == '*':
+                out = None
+                for t in pde[1:]:
+                    term = cls.from_pde(t, *args)
+                    if out is None:
+                        out = term
+                    elif type(term) is float or type(out) is float:
+                        out = out * term
+                    else:
+                        out = np.einsum('nijk,nj...,nk...->??', domain_tp_reduce, out, term)
+                return out
+            elif pde[0] == '+':
+                out_0 = []
+                out = []
+                for t in pde[1:]:
+                    term = cls.from_pde(t, *args)
+                    if term.bot_rank == 0:
+                        out_0.append(term)
+                    else:
+                        out.append(term)
+                
+                out_0 = cls.extend(out_0)
+                out = cls.extend(out)
+                return cls.extend([out, out_0])
+            elif pde[0] == 'h':
+                return hs[pde[1]]
+
+class TensorNetwork():
+    def __init__(self, bond_order, top_rank, operators, neighbors):
+
+        self.states = np.empty((len(neighbors), top_rank) + (bond_order,) * len(neighbors[0]))
+        self.operators = operators
+        self.neighbors = neighbors
+
+    @classmethod
+    def from_pde(cls, pde):
+        
+        return cls()

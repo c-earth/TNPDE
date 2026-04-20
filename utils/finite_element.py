@@ -1,9 +1,9 @@
 from math import comb
+import itertools
+
 import numpy as np
 from scipy import integrate
 import matplotlib.pyplot as plt
-
-from utils.tensor_network import TensorNetwork
 
 
 class Basis():
@@ -18,6 +18,10 @@ class Basis():
 
         self.rank = self.get_rank()
         self.order2bcp = self.get_order2bcp(self.d, self.domain_rank)
+        self.bcp2order = dict([(tuple(bcp), order) for order, bcp in enumerate(self.order2bcp)])
+        self.side_bcps = self.get_side_bcps()
+        self.side_orders = self.get_side_orders()
+        self.permuted_order_maps = self.get_permuted_order_maps()
         assert self.rank == len(self.order2bcp)
 
         self.standard_domain = self.get_standard_domain()
@@ -45,6 +49,38 @@ class Basis():
                 sub_order2bcp = cls.get_order2bcp(d - 1, domain_rank - r)
                 order2bcps.append(np.concatenate([r * np.ones((sub_order2bcp.shape[0], 1), dtype = int), sub_order2bcp], axis = 1))
         return np.concatenate(order2bcps, axis = 0)
+    
+    def get_side_bcps(self):
+        side_bcps = [[]] * self.d
+        for bcp in self.order2bcp:
+            if sum(bcp) == self.domain_rank + 1:
+                side_bcps[0].append(bcp)
+            for side in range(1, self.d + 1):
+                if bcp[side - 1] == 0:
+                    side_bcps[side].append(bcp)
+        
+        return np.array(side_bcps)
+    
+    def get_side_orders(self):
+        side_orders = []
+        for neighbor_idx in range(self.d + 1):
+            side_orders.append([self.bcp2order[tuple(bcp)] for bcp in self.side_bcps[neighbor_idx]])
+        return np.array(side_orders)
+    
+
+    def get_permuted_order_maps(self):
+        permuted_order_maps = dict()
+        for simplex_permutation in itertools.permutations(list(range(self.d + 1))):
+            order2bcp_with_0_points = np.concatenate([self.order2bcp, self.domain_rank - np.sum(self.order2bcp, axis = 1, keepdims = True)], axis = 1)
+            
+            permuted_order2bcp_with_0_points = order2bcp_with_0_points[:, simplex_permutation[:-1]]
+            permuted_order_map = [-1] * self.rank
+            for order, bcp in enumerate(permuted_order2bcp_with_0_points):
+                permuted_order_map[self.bcp2order[tuple(bcp)]] = order
+
+            permuted_order_maps[tuple(simplex_permutation)] = np.array(permuted_order_map)
+        return permuted_order_maps
+
 
     def get_standard_domain(self):
         return np.concatenate([np.eye(self.d), np.zeros((1, self.d))], axis = 0)
@@ -243,7 +279,14 @@ class FiniteElement():
         super().__init__()
         self.triangulation = triangulation
         self.basis = basis
-        self.domain_derivatives = self.get_domain_derivatives()
+        self.domain_derivatives_list = [np.broadcast_to(np.eye(self.basis.rank), 
+                                                        (self.triangulation.n, self.basis.rank, self.basis.rank)), 
+                                        self.get_domain_derivatives()]
+        self.neighbor_maps = self.get_neighbor_maps()
+        self.order_maps = self.get_order_maps()
+        self.con_bc_operators = None
+        self.env_bc_operators = None
+        
 
     def get_domain_derivatives(self):
         domain_derivatives = []
@@ -251,15 +294,14 @@ class FiniteElement():
             domain = self.triangulation.points[domain_simplex]
             derivatives = self.basis.transform(np.transpose(self.basis.derivatives, axes = [1, 2, 0]), domain, to_bary = False, is_contravariants = [False])
             domain_derivatives.append(np.transpose(derivatives, axes = [2, 0, 1]))
-        return domain_derivatives
+        return np.array(domain_derivatives)
     
 
     def diff(self, domain_rep, element, dim):
-        return np.einsum('ij,j->i', self.domain_derivatives[element][dim], domain_rep)
+        return np.einsum('ij,j->i', self.domain_derivatives_list[1][element][dim], domain_rep)
        
     def tp(self, domain_rep_1, domain_rep_2):
         return self.basis.tp(domain_rep_1, domain_rep_2)
-    
 
     def fun2rep(self, fun, is_contravariants = None):
         rep = []
@@ -274,7 +316,6 @@ class FiniteElement():
             rep.append(self.basis.element_fun2rep(element_fun))
         return rep
 
-
     def rep2fun(self, rep, is_contravariants = None):
         def fun(x):
             domain_idx = self.triangulation.find_simplex(x)
@@ -284,3 +325,94 @@ class FiniteElement():
             return self.basis.transform(element_fun(u), domain, to_bary = False, is_contravariants = is_contravariants)
         return fun
     
+    def get_neighbor_maps(self):
+        neighbor_maps = []
+        for element in range(self.triangulation.n):
+            neighbor_maps.append(self.get_element_neighbor_maps(element))
+
+        return np.array(neighbor_maps)
+    
+    def get_order_maps(self):
+        fun = lambda x: self.basis.permuted_order_maps[tuple(x)]
+        return np.apply_along_axis(fun, axis = -1, arr = self.neighbor_maps)
+    
+    def get_element_neighbor_maps(self, element):
+        neighbors = self.triangulation.neighbors[element]
+
+        neighbor_maps = - np.ones((self.basis.d + 1, self.basis.d + 1))
+        for neighbor_idx, neighbor in enumerate(neighbors):
+            if neighbor != -1:
+                element_simplex = self.triangulation.simplices[element]
+                neighbor_simplex = self.triangulation.simplices[neighbor]
+
+                for element_i, element_point in enumerate(element_simplex):
+                    if element_i == neighbor_idx:
+                        continue
+
+                    for neighbor_i, neighbor_point in enumerate(neighbor_simplex):
+                        if neighbor_point == element_point:
+                            neighbor_maps[neighbor_idx][neighbor_i] = element_i
+                
+                assert np.sum(neighbor_maps[neighbor_idx] == -1) == 1
+
+                neighbor_maps[neighbor_idx][neighbor_maps[neighbor_idx] == -1] = neighbor_idx
+        return neighbor_maps
+    
+    def calculate_higher_domain_derivatives(self, derivative_order):
+        while len(self.domain_derivatives_list) < derivative_order + 1:
+            self.domain_derivatives_list.append(np.einsum('ndij,n...jk->nd...ik', 
+                                                          self.domain_derivatives_list[1], 
+                                                          self.domain_derivatives_list[-1]))
+
+    def set_con_bc_operators(self, con_order):
+        con_bc_operators = None
+
+        if con_order is not None:
+            con_bc_operators = []
+            self.calculate_higher_domain_derivatives(con_order)
+            for domain_derivatives in self.domain_derivatives_list:
+                domain_side_derivatives = domain_derivatives[..., self.basis.side_orders, :] # the dimension still seem to be wrong
+                neighbor_derivatives_std_order = domain_derivatives[self.triangulation.neighbors]
+
+                tmp = neighbor_derivatives_std_order[np.arange(self.triangulation.n)[:, None, None], 
+                                                     np.arange(self.basis.d + 1)[None, :, None], 
+                                                     ..., self.order_maps, :]
+                neighbor_derivatives_dmn_order = np.moveaxis(tmp, 2, -2)
+                neighbor_side_derivatives = neighbor_derivatives_dmn_order[..., self.basis.side_orders, :]
+
+                compare_side_derivatives = np.concatenate([domain_side_derivatives, -neighbor_side_derivatives], axis = -1)
+                shape = compare_side_derivatives.shape
+                shape = shape[:2] + (-1,) + shape[-1:]
+                con_bc_operators.append(compare_side_derivatives.reshape(shape))
+        
+            con_bc_operators = np.concatenate(con_bc_operators, axis = 2)
+            con_bc_operators = np.einsum('ndki,ndkj->ndij', con_bc_operators, con_bc_operators)
+
+        self.con_bc_operators = con_bc_operators
+    
+    def set_env_bc_operators(self, env_bcs):
+        self.env_bc_operators = None
+
+        if env_bcs is not None:
+            self.env_bc_operators = dict()
+            for element, element_env_bcs in env_bcs.items():
+                self.env_bc_operators[element] = self.env_bc_operators.get(element, dict())
+                for neighbor_idx, side_env_bcs in element_env_bcs.items():
+                    env_bc_matrices, env_bc_vector = side_env_bcs
+                    self.calculate_higher_domain_derivatives(len(env_bc_matrices))
+
+                    env_bc_cummulant = None
+                    for domain_derivatives, env_bc_matrix in zip(self.domain_derivatives_list, env_bc_matrices):
+                        derivatives = domain_derivatives[element]
+                        env_bc_derivative_cummulant = np.einsum('...,...ij->ij', env_bc_matrix, derivatives)[self.basis.side_orders[neighbor_idx], :]
+                        if env_bc_cummulant is None:
+                            env_bc_cummulant = env_bc_derivative_cummulant
+                        else:
+                            env_bc_cummulant += env_bc_derivative_cummulant
+
+                    assert env_bc_cummulant is not None
+
+                    env_bc_operator = np.concatenate([env_bc_operator, env_bc_vector], axis = -1)
+
+                    self.env_bc_operators[element][neighbor_idx] = env_bc_operator
+        
