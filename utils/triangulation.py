@@ -55,10 +55,9 @@ class Delaunay1D():
         self.neighbors[-1, 0] = -1
 
     def find_simplex(self, x):
-        for i, idx in enumerate(self.idxs):
-            if x <= self.points[idx]:
-                return i - 1
-        return -1    
+        filter = (x[... , None, None] <= self.points[self.idxs[1:]]) * (x[..., None, None] >= self.points[self.idxs[:-1]])
+        grid = np.broadcast_to(np.array(range(len(self.simplices))), x.shape + (len(self.simplices),))[..., None]
+        return grid[filter]
 
 
 class Triangulation():

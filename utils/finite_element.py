@@ -312,12 +312,13 @@ class FiniteElement():
                 f = fun(x)
                 return self.basis.transform(f, domain, to_bary = True, is_contravariants = is_contravariants)
             
-            rep.append(self.basis.element_fun2rep(element_fun))
-        return rep
+            rep.append(self.basis.element_fun2rep([element_fun]))
+        return np.array(rep)
 
     def rep2fun(self, rep, is_contravariants = None):
         def fun(x):
-            domain_idx = self.triangulation.find_simplex(x)
+            domain_idx = self.triangulation.find_simplex(x)[0]
+
             domain = self.triangulation.points[self.triangulation.simplices[domain_idx]]
             element_fun = self.basis.element_rep2fun(rep[domain_idx])
             u = self.basis.transform(x, domain, to_bary = True, is_coordinate = True)
