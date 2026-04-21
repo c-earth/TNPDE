@@ -152,20 +152,63 @@ class TensorComplex():
         return TensorUnit(wrap_lat_tensor, tensor_unit.top_rank, [1] * len(tensor_unit.lat_ranks), tensor_unit.bot_rank)
     
 class TensorNetwork():
-    def __init__(self, bond_order, top_rank, operators, neighbors):
+    def __init__(self, basis_rank, neighbors, domain_derivatives_list, tp_reduce):
 
-        self.states = np.empty((len(neighbors), top_rank) + (bond_order,) * len(neighbors[0]))
-        self.operators = operators
+        self.states = None
+        self.operators = None
+        self.bond_order = None
+        self.basis_rank = basis_rank
         self.neighbors = neighbors
+        self.tensor_complex = TensorComplex(domain_derivatives_list, tp_reduce)
+        self.h_tensor_units = None
+        self.u_shape = None
+        self.dummy_u = None
 
-    @classmethod
-    def get_operators_from_pde(cls, pde, n, tensor_complex, hs):
+    def set_bond_order(self, bond_order):
+        assert type(bond_order) == int and bond_order > 0
+        self.bond_order = bond_order
+
+    def set_u_shape(self, u_shape):
+        for s in u_shape:
+            assert type(s) == int and s > 0
+        self.u_shape = u_shape
+        dummy_u_tensor = np.eye(np.prod(self.u_shape + (self.basis_rank,))).reshape(self.u_shape + (self.basis_rank, -1))
+        self.dummy_u = TensorUnit(np.broadcast_to(dummy_u_tensor, (len(self.neighbors),) + dummy_u_tensor.shape), len(self.u_shape) + 1, [], 1)
+
+    def set_h_tensor_units(self, h_tensor_units):
+        for h_tensor_unit in h_tensor_units:
+            assert type(h_tensor_unit) == TensorUnit
+        self.h_tensor_units = h_tensor_units
+
+    def get_operators_from_pde(self, pde):
         if type(pde) == float:
             return pde
         elif type(pde) == list:
-            pass
+            if pde[0] == 'h':
+                return self.h_tensor_units[int(pde[1])]
+            elif pde[0] == 'D':
+                if len(pde) == 2:
+                    self.tensor_complex.dif(self.dummy_u, [None] * int(pde[1]))
+                elif len(pde) > 2:
+                    assert pde[1] == len(pde[2:])
+                    self.tensor_complex.dif(self.dummy_u, [None if axis == -1 else int(axis) for axis in pde[2:]])
+                else:
+                    raise ValueError()
+            elif pde[0] == '*':
+                terms = [self.get_operators_from_pde(term) for term in pde[1:]]
+                product = terms[0]
+                for term in terms[1:]:
+                    if type(product) == float or type(term) == float:
+                        product = product * term
+                    else:
+                        product = self.tensor_complex.mul(product, term)
+                return product
+            elif pde[0] == '+':
+                terms = [self.get_operators_from_pde(term) for term in pde[1:]]
+                for term in terms:
+                    assert type(term) == TensorUnit
+                return self.tensor_complex.add(terms)
+        elif pde == 'u':
+            return self.dummy_u
         else:
             raise TypeError()
-        
-        
-

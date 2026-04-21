@@ -2,22 +2,18 @@ class PDE():
     '''
     `pde_txt` example:
     1. 5: `5`
-    2. 8x: `8*x_0`
-    3. du/dx: `D[u,x_0]`
-    5. u+9du/dy: `u+9*D[u,x_1]`
-    6. 8(u+x-y): `8*(u+x_0+-1*y)`
+    2. 8x: `8*h_0` where `hs[0] = lambda *x: x[0]`
+    3. du/dx: `D[1, 0]` or `D[1]` (for 1D problem)
+    5. u+9du/dy: `u+9*D[1, 1]`
+    6. 8(u+x-y): `8*(u+h_0+-1*h_1)` where `hs[0] = lambda *x: x[0]`, and `hs[1] = lambda *x: x[1]`
     '''
-    operators = set('+*^()')
+    operators = set('+*()')
 
-    def __init__(self, pde_txt, u_shape, x_shape, h_shapes):
+    def __init__(self, pde_txt):
         super().__init__()
         # shape must be tuple/list not array/tensor
         self.pde_txt = pde_txt
-        self.u_shape = u_shape
-        self.x_shape = x_shape
-        self.h_shapes = h_shapes
         self.pde = self.parse(self.pde_txt)
-        assert self.u_shape == self.get_shape(self.pde)
 
     @classmethod
     def parse_element(cls, ele_txt):
@@ -138,36 +134,3 @@ class PDE():
             return cls.clean_parse(priority_out)
         else:
             return cls.clean_parse([cls.parse_element(pde_txt)])
-        
-    def get_shape(self, pde):
-        if type(pde) == float:
-            return tuple()
-        elif pde == 'x':
-            return self.x_shape
-        elif pde == 'u':
-            return self.u_shape
-        elif type(pde) == list:
-            if pde[0] == 'x':
-                return self.x_shape[len(pde) - 1:]
-            elif pde[0] == 'u':
-                return self.u_shape[len(pde) - 1:]
-            elif pde[0] == 'h':
-                h_i_shape = self.h_shapes[pde[1]]
-                return h_i_shape[len(pde) - 2:]
-            elif pde[0] == 'D':
-                assert len(pde) == 3
-                shapes = [self.get_shape(term) for term in pde[1:]]
-                return shapes[1] + shapes[0]
-            elif pde[0] in '+*':
-                shapes = [self.get_shape(term) for term in pde[1:]]
-                shape_0 = None
-                for shape in shapes:
-                    if shape != tuple():
-                        if shape_0 is None:
-                            shape_0 = shapes[0]
-                        assert shape == shape_0
-                return shape_0 if shape_0 is not None else tuple()
-            else:
-                raise RuntimeError()
-        else:
-            raise RuntimeError()

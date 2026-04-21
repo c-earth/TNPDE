@@ -51,7 +51,7 @@ class Delaunay1D():
         self.idxs = np.argsort(self.points.reshape(-1))
 
         self.simplices = np.stack([self.idxs[:-1], self.idxs[1:]], axis = 1)
-        self.neighbors = np.array([list(range(1, len(self.points) + 1)), list(range(-1, len(self.points) - 1))])
+        self.neighbors = np.array([list(range(1, len(self.simplices) + 1)), list(range(-1, len(self.simplices) - 1))]).T
         self.neighbors[-1, 0] = -1
 
     def find_simplex(self, x):
@@ -82,7 +82,7 @@ class Triangulation():
 
     @property
     def n(self):
-        return self.nodes.n
+        return len(self.simplices)
     
 
     @property

@@ -51,14 +51,13 @@ class Basis():
         return np.concatenate(order2bcps, axis = 0)
     
     def get_side_bcps(self):
-        side_bcps = [[]] * self.d
+        side_bcps = [[] for _ in range(self.d + 1)]
         for bcp in self.order2bcp:
-            if sum(bcp) == self.domain_rank + 1:
+            if sum(bcp) == self.domain_rank:
                 side_bcps[0].append(bcp)
             for side in range(1, self.d + 1):
                 if bcp[side - 1] == 0:
                     side_bcps[side].append(bcp)
-        
         return np.array(side_bcps)
     
     def get_side_orders(self):
@@ -333,7 +332,12 @@ class FiniteElement():
         return np.array(neighbor_maps)
     
     def get_order_maps(self):
-        fun = lambda x: self.basis.permuted_order_maps[tuple(x)]
+        def fun(x):
+            x = tuple([int(c) for c in x])
+            if -1 in x:
+                return self.basis.permuted_order_maps[tuple(range(self.basis.d + 1))]
+            else:
+                return self.basis.permuted_order_maps[x] 
         return np.apply_along_axis(fun, axis = -1, arr = self.neighbor_maps)
     
     def get_element_neighbor_maps(self, element):
@@ -371,14 +375,16 @@ class FiniteElement():
             con_bc_operators = []
             self.calculate_higher_domain_derivatives(con_order)
             for domain_derivatives in self.domain_derivatives_list:
-                domain_side_derivatives = domain_derivatives[..., self.basis.side_orders, :] # the dimension still seem to be wrong
-                neighbor_derivatives_std_order = domain_derivatives[self.triangulation.neighbors]
+                domain_side_derivatives = np.moveaxis(domain_derivatives[..., self.basis.side_orders, :], -3, 1) # the dimension still seem to be wrong
 
+
+                neighbor_derivatives_std_order = domain_derivatives[self.triangulation.neighbors]
                 tmp = neighbor_derivatives_std_order[np.arange(self.triangulation.n)[:, None, None], 
                                                      np.arange(self.basis.d + 1)[None, :, None], 
                                                      ..., self.order_maps, :]
+                
                 neighbor_derivatives_dmn_order = np.moveaxis(tmp, 2, -2)
-                neighbor_side_derivatives = neighbor_derivatives_dmn_order[..., self.basis.side_orders, :]
+                neighbor_side_derivatives = np.moveaxis(neighbor_derivatives_dmn_order[:, np.arange(self.basis.d + 1)[:, None], ... , self.basis.side_orders, :], [0, 1], [1, -2])
 
                 compare_side_derivatives = np.concatenate([domain_side_derivatives, -neighbor_side_derivatives], axis = -1)
                 shape = compare_side_derivatives.shape
@@ -390,7 +396,7 @@ class FiniteElement():
 
         self.con_bc_operators = con_bc_operators
     
-    def set_env_bc_operators(self, env_bcs):
+    def set_env_bc_operators(self, env_bcs = None):
         self.env_bc_operators = None
 
         if env_bcs is not None:
@@ -404,7 +410,7 @@ class FiniteElement():
                     env_bc_cummulant = None
                     for domain_derivatives, env_bc_matrix in zip(self.domain_derivatives_list, env_bc_matrices):
                         derivatives = domain_derivatives[element]
-                        env_bc_derivative_cummulant = np.einsum('...,...ij->ij', env_bc_matrix, derivatives)[self.basis.side_orders[neighbor_idx], :]
+                        env_bc_derivative_cummulant = np.einsum('n...,...ij->nij', env_bc_matrix, derivatives)[..., self.basis.side_orders[neighbor_idx], :]
                         if env_bc_cummulant is None:
                             env_bc_cummulant = env_bc_derivative_cummulant
                         else:
@@ -412,7 +418,7 @@ class FiniteElement():
 
                     assert env_bc_cummulant is not None
 
-                    env_bc_operator = np.concatenate([env_bc_operator, env_bc_vector], axis = -1)
+                    env_bc_operator = np.concatenate([env_bc_cummulant, -env_bc_vector], axis = -1)
 
-                    self.env_bc_operators[element][neighbor_idx] = env_bc_operator
+                    self.env_bc_operators[element][neighbor_idx] = np.einsum('mki,mkj->ij', env_bc_operator, env_bc_operator)
         
