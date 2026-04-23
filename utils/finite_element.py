@@ -2,6 +2,7 @@ from math import comb
 import itertools
 
 import numpy as np
+import scipy
 from scipy import integrate
 import matplotlib.pyplot as plt
 
@@ -283,9 +284,11 @@ class FiniteElement():
                                         self.get_domain_derivatives()]
         self.neighbor_maps = self.get_neighbor_maps()
         self.order_maps = self.get_order_maps()
+        self.u_shape = None
+        self.d_con_bc_operators = None
+        self.n_con_bc_operators = None
         self.con_bc_operators = None
         self.env_bc_operators = None
-        
 
     def get_domain_derivatives(self):
         domain_derivatives = []
@@ -315,6 +318,7 @@ class FiniteElement():
             rep.append(self.basis.element_fun2rep([element_fun]))
         return np.array(rep)
 
+
     def rep2fun(self, rep, is_contravariants = None):
         def fun(x):
             domain_idx = self.triangulation.find_simplex(x)[0]
@@ -325,6 +329,7 @@ class FiniteElement():
             return self.basis.transform(element_fun(u), domain, to_bary = False, is_contravariants = is_contravariants)
         return fun
     
+
     def get_neighbor_maps(self):
         neighbor_maps = []
         for element in range(self.triangulation.n):
@@ -332,6 +337,7 @@ class FiniteElement():
 
         return np.array(neighbor_maps)
     
+
     def get_order_maps(self):
         def fun(x):
             x = tuple([int(c) for c in x])
@@ -341,6 +347,7 @@ class FiniteElement():
                 return self.basis.permuted_order_maps[x] 
         return np.apply_along_axis(fun, axis = -1, arr = self.neighbor_maps)
     
+
     def get_element_neighbor_maps(self, element):
         neighbors = self.triangulation.neighbors[element]
 
@@ -363,21 +370,24 @@ class FiniteElement():
                 neighbor_maps[neighbor_idx][neighbor_maps[neighbor_idx] == -1] = neighbor_idx
         return neighbor_maps
     
+
     def calculate_higher_domain_derivatives(self, derivative_order):
         while len(self.domain_derivatives_list) < derivative_order + 1:
             self.domain_derivatives_list.append(np.einsum('ndij,n...jk->nd...ik', 
                                                           self.domain_derivatives_list[1], 
                                                           self.domain_derivatives_list[-1]))
 
+
     def set_con_bc_operators(self, con_order):
-        con_bc_operators = None
+        d_con_bc_operators = None
+        n_con_bc_operators = None
 
         if con_order is not None:
-            con_bc_operators = []
+            d_con_bc_operators = []
+            n_con_bc_operators = []
             self.calculate_higher_domain_derivatives(con_order)
             for domain_derivatives in self.domain_derivatives_list:
                 domain_side_derivatives = np.moveaxis(domain_derivatives[..., self.basis.side_orders, :], -3, 1) # the dimension still seem to be wrong
-
 
                 neighbor_derivatives_std_order = domain_derivatives[self.triangulation.neighbors]
                 tmp = neighbor_derivatives_std_order[np.arange(self.triangulation.n)[:, None, None], 
@@ -387,16 +397,57 @@ class FiniteElement():
                 neighbor_derivatives_dmn_order = np.moveaxis(tmp, 2, -2)
                 neighbor_side_derivatives = np.moveaxis(neighbor_derivatives_dmn_order[:, np.arange(self.basis.d + 1)[:, None], ... , self.basis.side_orders, :], [0, 1], [1, -2])
 
-                compare_side_derivatives = np.concatenate([domain_side_derivatives, -neighbor_side_derivatives], axis = -1)
-                shape = compare_side_derivatives.shape
-                shape = shape[:2] + (-1,) + shape[-1:]
-                con_bc_operators.append(compare_side_derivatives.reshape(shape))
+                d_shape = domain_side_derivatives.shape
+                d_shape = d_shape[:2] + (-1,) + d_shape[-1:]
+                n_shape = neighbor_side_derivatives.shape
+                n_shape = n_shape[:2] + (-1,) + n_shape[-1:]
+
+                d_con_bc_operators.append(domain_side_derivatives.reshape(d_shape))
+                n_con_bc_operators.append(neighbor_side_derivatives.reshape(n_shape))
         
-            con_bc_operators = np.concatenate(con_bc_operators, axis = 2)
-            con_bc_operators = np.einsum('ndki,ndkj->ndij', con_bc_operators, con_bc_operators)
+            d_con_bc_operators = np.concatenate(d_con_bc_operators, axis = 2)
+            n_con_bc_operators = np.concatenate(n_con_bc_operators, axis = 2)
+
+            # d_con_bc_operators = np.einsum('ndki,ndkj->ndij', d_con_bc_operators, d_con_bc_operators)
+            # n_con_bc_operators = np.einsum('ndki,ndkj->ndij', n_con_bc_operators, n_con_bc_operators)
+
+        self.d_con_bc_operators = d_con_bc_operators
+        self.n_con_bc_operators = n_con_bc_operators
+
+        if self.u_shape is not None:
+            self.set_u_shape(self.u_shape)
+        else:
+            self.u_shape = tuple()
+            self.set_con_bc_operators_with_u_shape()
+
+
+    def set_con_bc_operators_with_u_shape(self):
+        # self.u_shape = (3, 3)
+        d_con_bc_operators = np.kron(np.eye(int(np.prod(self.u_shape))), self.d_con_bc_operators)
+        n_con_bc_operators = np.kron(np.eye(int(np.prod(self.u_shape))), self.n_con_bc_operators)
+
+        d_con_bc_operators = scipy.linalg.block_diag(d_con_bc_operators, np.ones(d_con_bc_operators.shape[:-2] + (1, 1)))
+        n_con_bc_operators = scipy.linalg.block_diag(n_con_bc_operators, np.ones(n_con_bc_operators.shape[:-2] + (1, 1)))
+
+        assert d_con_bc_operators.shape == n_con_bc_operators.shape
+
+        r = d_con_bc_operators.shape[-2] - 1
+        subtraction_tensor = np.zeros((r, r + 1, r + 1))
+        for i in range(r):
+            subtraction_tensor[i, i, r] = 1
+            subtraction_tensor[i, r, i] = -1
+
+        
+        con_bc_operators = np.einsum('ijk,ndjp,ndkq->ndipq', subtraction_tensor, d_con_bc_operators, n_con_bc_operators)
+        con_bc_operators = np.einsum('ndipq,ndijk->ndpqjk', con_bc_operators, con_bc_operators)
 
         self.con_bc_operators = con_bc_operators
-    
+
+    def set_u_shape(self, u_shape):
+        self.u_shape = u_shape
+        self.set_con_bc_operators_with_u_shape()
+
+        
     def set_env_bc_operators(self, env_bcs = None):
         self.env_bc_operators = None
 
@@ -411,7 +462,7 @@ class FiniteElement():
                     env_bc_cummulant = None
                     for domain_derivatives, env_bc_matrix in zip(self.domain_derivatives_list, env_bc_matrices):
                         derivatives = domain_derivatives[element]
-                        env_bc_derivative_cummulant = np.einsum('n...,...ij->nij', env_bc_matrix, derivatives)[..., self.basis.side_orders[neighbor_idx], :]
+                        env_bc_derivative_cummulant = np.tensordot(env_bc_matrix, derivatives[..., self.basis.side_orders[neighbor_idx], :], axes = len(env_bc_matrix.shape) - 1)
                         if env_bc_cummulant is None:
                             env_bc_cummulant = env_bc_derivative_cummulant
                         else:
@@ -419,7 +470,7 @@ class FiniteElement():
 
                     assert env_bc_cummulant is not None
 
-                    env_bc_operator = np.concatenate([env_bc_cummulant, -env_bc_vector], axis = -1)
+                    
+                    env_bc_operator = np.concatenate([env_bc_cummulant, -env_bc_vector], axis = -1).reshape((env_bc_cummulant.shape[0], -1))
 
-                    self.env_bc_operators[element][neighbor_idx] = np.einsum('mki,mkj->ij', env_bc_operator, env_bc_operator)
-        
+                    self.env_bc_operators[element][neighbor_idx] = np.einsum('mi,mj->ij', env_bc_operator, env_bc_operator)
