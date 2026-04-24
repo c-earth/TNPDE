@@ -91,6 +91,7 @@ class TensorComplex():
                                np.moveaxis(tp_unit.tensor, [tensor_unit_1.top_rank, tp_unit.top_rank], [0, 1]))
         mul_tensor = np.moveaxis(mul_tensor, 0, tp_unit.top_rank - 1)
         return TensorUnit(mul_tensor, tp_unit.top_rank - 1, tp_unit.lat_ranks, tp_unit.bot_rank)
+    
 
     def add(self, tensor_units):
         # assume all bot_rank contract to a power of state self tensor product
@@ -156,6 +157,7 @@ class TensorNetwork():
 
         self.states = None
         self.operators = None
+        self.solver = None
         self.bond_order = None
         self.basis_rank = basis_rank
         self.neighbors = neighbors
@@ -179,6 +181,20 @@ class TensorNetwork():
         for h_tensor_unit in h_tensor_units:
             assert type(h_tensor_unit) == TensorUnit
         self.h_tensor_units = h_tensor_units
+
+
+    def get_operators_from_interp_reps(self, rep_tensor):
+
+        r = rep_tensor.shape[-1] - 1
+        subtraction_tensor = np.zeros((r, r + 1, r + 1))
+        for i in range(r):
+            subtraction_tensor[i, i, r] = 1
+            subtraction_tensor[i, r, i] = -1
+
+        sub_tensor = np.einsum('ijk,nk->nij', subtraction_tensor, rep_tensor)
+        sub_operators = np.einsum('nij,nik->njk', sub_tensor, sub_tensor)
+        return TensorUnit(sub_operators, 1, [], 1)
+
 
     def get_operators_from_pde(self, pde):
         if type(pde) == float:
@@ -212,3 +228,24 @@ class TensorNetwork():
             return self.dummy_u
         else:
             raise TypeError()
+
+    def set_operators(self, operators):
+        assert type(operators) == TensorUnit
+        self.operators = operators
+
+    def set_states(self, states, bond_order):
+        self.set_bond_order(bond_order)
+        self.states = TensorUnit(states, 1, self.neighbors.shape[-1] * [1], 0)
+
+
+    def set_solver(self, solver):
+        self.solver = solver
+
+    def set_bcs(self, con_bc_operators, env_bc_operators):
+        self.con_bc_operators = con_bc_operators
+        self.env_bc_operators = env_bc_operators
+
+    def solve(self, rounds, alpha , env):
+        self.solver.add_system(self.neighbors, self.states.tensor, self.operators.tensor, self.con_bc_operators, self.env_bc_operators, alpha)
+        self.solver.solve(rounds, starting_element = 0, starting_direction = 0, env = env)
+    

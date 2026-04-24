@@ -115,7 +115,7 @@ class Basis():
             for i, is_contravariant in zip(range(-len(is_contravariants), 0), is_contravariants):
                 J_axis = J if is_contravariant else J_inv.T
                 out = np.swapaxes(np.einsum('ij,...j->...i', J_axis, np.swapaxes(out, i, -1)), i, -1)
-            return T
+            return out
         
 
     def get_basis_funs(self):
@@ -160,7 +160,7 @@ class Basis():
     
     
     def basis_fun_overlap(self, fun):
-        return self.overlap(self.basis_funs, fun).flatten()
+        return self.overlap(self.basis_funs, [fun]).flatten()
     
     def element_fun2rep(self, fun):
         return np.einsum('ij,j->i', self.inv_basis_overlap, self.basis_fun_overlap(fun))
@@ -252,13 +252,15 @@ class LagrangeBasis(Basis):
                 for c in range(bcp[i]):
                     if is_b0 or c != c_dim:
                         out_tmp *= (x[:, i] - c) 
+                    else:
+                        out_tmp *= self.domain_rank
                     out_tmp /= (bcp[i] - c)
 
                 for c in range(b0):
                     if (not is_b0) or c != c_dim:
                         out_tmp *= (x0 - c)
                     else:
-                        out_tmp *= -1
+                        out_tmp *= -self.domain_rank
                     out_tmp /= (b0 - c)
 
                 out_dim += out_tmp
@@ -301,6 +303,9 @@ class FiniteElement():
 
     def diff(self, domain_rep, element, dim):
         return np.einsum('ij,j->i', self.domain_derivatives_list[1][element][dim], domain_rep)
+    
+    def all_diff(self, rep, dim):
+        return np.array([self.diff(domain_rep, element, dim) for element, domain_rep in enumerate(rep)])
        
     def tp(self, domain_rep_1, domain_rep_2):
         return self.basis.tp(domain_rep_1, domain_rep_2)
@@ -315,19 +320,19 @@ class FiniteElement():
                 f = fun(x)
                 return self.basis.transform(f, domain, to_bary = True, is_contravariants = is_contravariants)
             
-            rep.append(self.basis.element_fun2rep([element_fun]))
+            rep.append(self.basis.element_fun2rep(element_fun))
         return np.array(rep)
 
 
-    def rep2fun(self, rep, is_contravariants = None):
+    def rep2fun(self, reps, is_contravariants = None):
+        element_funs = [self.basis.element_rep2fun(rep) for rep in reps]
+        domains = self.triangulation.points[self.triangulation.simplices]
         def fun(x):
+            x = np.array([x])
             domain_idx = self.triangulation.find_simplex(x)[0]
-
-            domain = self.triangulation.points[self.triangulation.simplices[domain_idx]]
-            element_fun = self.basis.element_rep2fun(rep[domain_idx])
-            u = self.basis.transform(x, domain, to_bary = True, is_coordinate = True)
-            return self.basis.transform(element_fun(u), domain, to_bary = False, is_contravariants = is_contravariants)
-        return fun
+            u = self.basis.transform(x, domains[domain_idx], to_bary = True, is_coordinate = True)
+            return self.basis.transform(element_funs[domain_idx](u), domains[domain_idx], to_bary = False, is_contravariants = is_contravariants)[0]
+        return np.vectorize(fun)
     
 
     def get_neighbor_maps(self):
@@ -387,7 +392,7 @@ class FiniteElement():
             n_con_bc_operators = []
             self.calculate_higher_domain_derivatives(con_order)
             for domain_derivatives in self.domain_derivatives_list:
-                domain_side_derivatives = np.moveaxis(domain_derivatives[..., self.basis.side_orders, :], -3, 1) # the dimension still seem to be wrong
+                domain_side_derivatives = np.moveaxis(domain_derivatives[..., self.basis.side_orders, :], -3, 1)
 
                 neighbor_derivatives_std_order = domain_derivatives[self.triangulation.neighbors]
                 tmp = neighbor_derivatives_std_order[np.arange(self.triangulation.n)[:, None, None], 
@@ -408,9 +413,6 @@ class FiniteElement():
             d_con_bc_operators = np.concatenate(d_con_bc_operators, axis = 2)
             n_con_bc_operators = np.concatenate(n_con_bc_operators, axis = 2)
 
-            # d_con_bc_operators = np.einsum('ndki,ndkj->ndij', d_con_bc_operators, d_con_bc_operators)
-            # n_con_bc_operators = np.einsum('ndki,ndkj->ndij', n_con_bc_operators, n_con_bc_operators)
-
         self.d_con_bc_operators = d_con_bc_operators
         self.n_con_bc_operators = n_con_bc_operators
 
@@ -422,7 +424,6 @@ class FiniteElement():
 
 
     def set_con_bc_operators_with_u_shape(self):
-        # self.u_shape = (3, 3)
         d_con_bc_operators = np.kron(np.eye(int(np.prod(self.u_shape))), self.d_con_bc_operators)
         n_con_bc_operators = np.kron(np.eye(int(np.prod(self.u_shape))), self.n_con_bc_operators)
 

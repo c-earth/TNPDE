@@ -21,12 +21,23 @@ class Solver():
     def update_dm(self, element):
         raise NotImplementedError
 
-    def add_system(self, neighbors, states, operators, bcs, alpha, random = False):
+    def add_system(self, neighbors, states, operators, con_bc_operators, env_bc_operators, alpha, random = False):
         n, d = neighbors.shape
         d -= 1
         assert self.d == d
 
         reversed_neighbor_idxs = self.check_neighbors(neighbors)
+
+        bcs = []
+        for element_con_bc_operators in con_bc_operators:
+            element_bcs = []
+            for con_bc_operator in element_con_bc_operators:
+                element_bcs.append(con_bc_operator)
+            bcs.append(element_bcs)
+
+        for element in env_bc_operators:
+            for neighbor_idx in env_bc_operators[element]:
+                bcs[element][neighbor_idx] = env_bc_operators[element][neighbor_idx]
 
         self.check_states_operators_bcs(states, operators, bcs, neighbors, reversed_neighbor_idxs)
 
@@ -46,7 +57,7 @@ class Solver():
         self.reset_dm()
 
     def check_neighbors(self, neighbors):
-        reversed_neighbor_idxs = - np.ones(neighbors.shape)
+        reversed_neighbor_idxs = - np.ones(neighbors.shape, dtype = int)
         for element, element_neighbors in enumerate(neighbors):
             for i, element_neighbor in enumerate(element_neighbors):
                 if element_neighbor != -1:
@@ -64,12 +75,13 @@ class Solver():
     def check_states_operators_bcs(self, states, operators, bcs, neighbors, reversed_neighbor_idxs):
         for state, operator, state_bcs, element_neighbors, element_reversed_neighbor_idxs in zip(states, operators, bcs, neighbors, reversed_neighbor_idxs):
             assert list(state.shape[1:]) == [states[element_neighbor].shape[1:][reversed_neighbor_idx] for element_neighbor, reversed_neighbor_idx in zip(element_neighbors, element_reversed_neighbor_idxs)]
-            assert list(operator.shape[1:-1]) == [operators[element_neighbor].shape[1:-1][reversed_neighbor_idx] for element_neighbor, reversed_neighbor_idx in zip(element_neighbors, element_reversed_neighbor_idxs)]
+            if len(operator.shape[1:-1]) > 0:
+                assert list(operator.shape[1:-1]) == [operators[element_neighbor].shape[1:-1][reversed_neighbor_idx] for element_neighbor, reversed_neighbor_idx in zip(element_neighbors, element_reversed_neighbor_idxs)]
             assert state.shape[0] == operator.shape[0]
             assert state.shape[0] == operator.shape[-1]
-            for state_bc, element_neighbor in zip(state_bcs, element_neighbors):              
+            for state_bc, element_neighbor in zip(state_bcs, element_neighbors):   
                 if element_neighbor == -1:
-                    assert list(state_bc.shape) == 2 * [state.shape[0]]
+                    assert list(state_bc.shape) == 2 * [state.shape[0]] or list(state_bc.shape) == 2 * [state.shape[0], states[element_neighbor].shape[0]]
                 else:
                     assert list(state_bc.shape) == 2 * [state.shape[0], states[element_neighbor].shape[0]]
 
@@ -79,13 +91,13 @@ class Solver():
     def get_bcs_regularizer(self, element):
         raise NotImplementedError
 
-    def get_optimization_function(self, element):
+    def get_optimization_function(self, element, env = True):
         shape = self.states[element].shape
-        return lambda state: self.get_ansatz(element)(state.reshape(shape)) + self.alpha * self.get_bcs_regularizer(element)(state.reshape(shape))
+        return lambda state: self.get_ansatz(element)(state.reshape(shape)) + self.alpha * self.get_bcs_regularizer(element, env = env)(state.reshape(shape))
     
-    def step(self, element):
+    def step(self, element, env = True):
         shape = self.states[element].shape
-        fun = self.get_optimization_function(element)
+        fun = self.get_optimization_function(element, env = env)
         result = minimize(fun, self.states[element].reshape(-1))
         if not result.success:
             print(result.message)
@@ -93,12 +105,12 @@ class Solver():
         self.states[element] = result.x.reshape(shape)
         self.update_dm(element)
     
-    def solve(self, rounds, starting_element = 0, starting_direction = 0):
+    def solve(self, rounds, starting_element = 0, starting_direction = 0, env = True):
         step = 0
         element = starting_element
         starting_direction = starting_direction
         while step < 2 * rounds * self.n:
-            self.step(element)
+            self.step(element, env = env)
 
             step += 1
             next_element = self.neighbors[element][starting_direction]
@@ -160,7 +172,7 @@ class DMRG(Solver):
         
         return ansatz
     
-    def get_bcs_regularizer(self, element):
+    def get_bcs_regularizer(self, element, env = True):
         neighbor_states = [self.states[neighbor] if neighbor != -1 else None for neighbor in self.neighbors[element]]
         neighbor_contractions = [self.get_contraction(neighbor, neighbor_idx, norm = True) for neighbor_idx, neighbor in enumerate(self.neighbors[element])]
         next_neighbor_contractions = [self.get_contraction(self.neighbors[neighbor][neighbor_idx], neighbor_idx, norm = True) 
