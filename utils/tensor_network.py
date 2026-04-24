@@ -174,7 +174,7 @@ class TensorNetwork():
         for s in u_shape:
             assert type(s) == int and s > 0
         self.u_shape = u_shape
-        dummy_u_tensor = np.eye(np.prod(self.u_shape + (self.basis_rank,))).reshape(self.u_shape + (self.basis_rank, -1))
+        dummy_u_tensor = np.eye(np.prod(self.u_shape + (self.basis_rank + 1,))).reshape(self.u_shape + (self.basis_rank + 1, -1))
         self.dummy_u = TensorUnit(np.broadcast_to(dummy_u_tensor, (len(self.neighbors),) + dummy_u_tensor.shape), len(self.u_shape) + 1, [], 1)
 
     def set_h_tensor_units(self, h_tensor_units):
@@ -186,17 +186,18 @@ class TensorNetwork():
     def get_operators_from_interp_reps(self, rep_tensor):
 
         r = rep_tensor.shape[-1] - 1
-        subtraction_tensor = np.zeros((r, r + 1, r + 1))
+        subtraction_tensor = np.zeros((r + 1, r + 1, r + 1))
         for i in range(r):
             subtraction_tensor[i, i, r] = 1
             subtraction_tensor[i, r, i] = -1
+        subtraction_tensor[r, r, r] = 1
 
         sub_tensor = np.einsum('ijk,nk->nij', subtraction_tensor, rep_tensor)
         sub_operators = np.einsum('nij,nik->njk', sub_tensor, sub_tensor)
         return TensorUnit(sub_operators, 1, [], 1)
 
 
-    def get_operators_from_pde(self, pde):
+    def get_half_operators_from_pde(self, pde):
         if type(pde) == float:
             return pde
         elif type(pde) == list:
@@ -211,7 +212,7 @@ class TensorNetwork():
                 else:
                     raise ValueError()
             elif pde[0] == '*':
-                terms = [self.get_operators_from_pde(term) for term in pde[1:]]
+                terms = [self.get_half_operators_from_pde(term) for term in pde[1:]]
                 product = terms[0]
                 for term in terms[1:]:
                     if type(product) == float or type(term) == float:
@@ -220,7 +221,7 @@ class TensorNetwork():
                         product = self.tensor_complex.mul(product, term)
                 return product
             elif pde[0] == '+':
-                terms = [self.get_operators_from_pde(term) for term in pde[1:]]
+                terms = [self.get_half_operators_from_pde(term) for term in pde[1:]]
                 for term in terms:
                     assert type(term) == TensorUnit
                 return self.tensor_complex.add(terms)
@@ -237,7 +238,6 @@ class TensorNetwork():
         self.set_bond_order(bond_order)
         self.states = TensorUnit(states, 1, self.neighbors.shape[-1] * [1], 0)
 
-
     def set_solver(self, solver):
         self.solver = solver
 
@@ -246,6 +246,6 @@ class TensorNetwork():
         self.env_bc_operators = env_bc_operators
 
     def solve(self, rounds, alpha , env):
-        self.solver.add_system(self.neighbors, self.states.tensor, self.operators.tensor, self.con_bc_operators, self.env_bc_operators, alpha)
-        self.solver.solve(rounds, starting_element = 0, starting_direction = 0, env = env)
+        self.solver.add_system(self.bond_order, self.neighbors, self.states, self.operators, self.con_bc_operators, self.env_bc_operators, alpha)
+        return self.solver.solve(rounds, starting_element = 1, starting_direction = 0, env = env)
     

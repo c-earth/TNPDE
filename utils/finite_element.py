@@ -55,9 +55,9 @@ class Basis():
         side_bcps = [[] for _ in range(self.d + 1)]
         for bcp in self.order2bcp:
             if sum(bcp) == self.domain_rank:
-                side_bcps[0].append(bcp)
-            for side in range(1, self.d + 1):
-                if bcp[side - 1] == 0:
+                side_bcps[-1].append(bcp)
+            for side in range(self.d):
+                if bcp[side] == 0:
                     side_bcps[side].append(bcp)
         return np.array(side_bcps)
     
@@ -169,15 +169,15 @@ class Basis():
         return lambda x: sum([r * basis_fun(x) for r, basis_fun in zip(rep, self.basis_funs)])
     
 
-    def visualize(self):
+    def visualize(self, n = 100):
         if self.d == 1:
-            x = np.linspace(0, 1, 20)
+            x = np.linspace(0, 1, n)
             plt.figure()
             for fun in self.basis_funs:
                 plt.plot(x, fun(x))
             plt.show()
         elif self.d == 2:
-            xs, ys = np.meshgrid(np.linspace(0, 1, 20), np.linspace(0, 1, 20))
+            xs, ys = np.meshgrid(np.linspace(0, 1, n), np.linspace(0, 1, n))
             fig, axs = plt.subplots(self.domain_rank + 1, self.domain_rank + 1, figsize = ((self.domain_rank + 1)*2, (self.domain_rank + 1)*2))
             for ax in axs.ravel():
                 ax.set_axis_off()
@@ -185,12 +185,13 @@ class Basis():
                 ax = axs[*self.order2bcp[i]]
 
                 zs = np.array([[fun(point)[0] if point[0] >= 0 and point[1] >= 0 and np.sum(point) <= 1 else 0 for point in zip(xr, yr)] for xr, yr in zip(xs, ys)])
-                zs = zs.reshape((20, 20)).T
-                ax.imshow(zs, cmap = 'viridis', interpolation = 'nearest')
+                zs = zs.reshape((n, n)).T
+                im = ax.imshow(zs, cmap = 'jet', interpolation = 'nearest', vmin = -1, vmax = 1.5, aspect='auto')
                 ax.get_xaxis().set_ticks([])
                 ax.get_yaxis().set_ticks([])
-                
-            fig.tight_layout()
+            fig.subplots_adjust(right = 0.9)
+            cbar_ax = fig.add_axes([0.95, 0.1, 0.03, 0.8])
+            fig.colorbar(im, cax=cbar_ax)
             fig.show()
         else:
             raise NotImplementedError()
@@ -391,7 +392,7 @@ class FiniteElement():
             d_con_bc_operators = []
             n_con_bc_operators = []
             self.calculate_higher_domain_derivatives(con_order)
-            for domain_derivatives in self.domain_derivatives_list:
+            for domain_derivatives in self.domain_derivatives_list[:con_order + 1]:
                 domain_side_derivatives = np.moveaxis(domain_derivatives[..., self.basis.side_orders, :], -3, 1)
 
                 neighbor_derivatives_std_order = domain_derivatives[self.triangulation.neighbors]
