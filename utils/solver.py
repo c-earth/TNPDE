@@ -1,6 +1,8 @@
 import numpy as np
 from scipy.optimize import minimize
 
+import string
+
 
 class Solver():
     def __init__(self, d):
@@ -48,23 +50,36 @@ class Solver():
         raise NotImplementedError
 
 
-    def get_optimization_function(self, element, env = True):
+    def get_optimization_function(self, element, env = True, pde = (False, [])):
         shape = list(self.states.shape[1:])
         shape[0] -= 1
         def fun(flat_state):
             state = self.states.tensor[element].copy()
             state[...,:-1,:, :] = flat_state.reshape(shape)
-            ansatz_out = self.get_ansatz(element)(state)
+            if pde[0]:
+                power_states = [np.ones((1,) + state.shape[1:]), state]
+                ansatz_power_states = []
+                for bot_rank in pde[1]:
+                    while bot_rank >= len(power_states):
+                        f_script = string.ascii_letters[:len(power_states[-1].shape)]
+                        s_script = string.ascii_letters[len(power_states[-1].shape)] + f_script[len(power_states) - 1:]
+                        o_script = string.ascii_letters[len(power_states[-1].shape)] + f_script
+                        power_states.append(np.einsum(f'{f_script},{s_script}->{o_script}', power_states[-1], state))
+                    ansatz_power_states.append(power_states[bot_rank].reshape((-1,) + state.shape[1:]))
+                ansatz_state = np.concatenate(ansatz_power_states, axis = 0)
+            else:
+                ansatz_state = state
+            ansatz_out = self.get_ansatz(element)(ansatz_state)
             bc_out = self.get_bcs_regularizer(element, env = env)(state)
             return ansatz_out + self.alpha * bc_out
         return fun
 
 
-    def step(self, element, env = True):
+    def step(self, element, env = True, pde = (False, [])):
         shape = list(self.states.shape[1:])
         shape[0] -= 1
-        fun = self.get_optimization_function(element, env = env)
-        result = minimize(fun, self.states.tensor[element][:-1].reshape(-1))
+        fun = self.get_optimization_function(element, env = env, pde = pde)
+        result = minimize(fun, self.states.tensor[element][:-1].reshape(-1), options = {'maxiter': 1})
         self.states.tensor[element][...,:-1,:, :] = result.x.reshape(shape)
         self.update_dm(element)
         return fun(result.x)
@@ -74,18 +89,16 @@ class Solver():
         raise NotImplementedError
 
 
-    def solve(self, rounds, starting_element = 0, starting_direction = 0, env = True):
+    def solve(self, rounds, starting_element = 0, starting_direction = 0, env = True, pde = (False, [])):
         step = 0
         r = 0
         element = starting_element
         direction = starting_direction
         while step < 2 * rounds * self.n:
-            target = self.step(element, env = env)
+            self.step(element, env = env, pde = pde)
             step += 1
-            # print(f'\tstep: {step % rounds}, target value: {target}.')
             if step % (2 * self.n) == 0:
                 r += 1
-                print(f'Optimizing round: {r}', end = '\r')
             element, direction = self.next(element, direction)
         return self.states
 
@@ -111,6 +124,8 @@ class DMRG(Solver):
 
     def contract2neighbor_contraction(self, state, element, neighbor_idx, neighbor_contraction, norm = False):
         operator = self.operators.tensor[element]
+
+        print(state.shape, element, neighbor_idx, neighbor_contraction.shape)
 
         tmp = np.einsum('qnk,i...k->qi...n', np.moveaxis(state, neighbor_idx + 1, -1), neighbor_contraction)
         if not norm:

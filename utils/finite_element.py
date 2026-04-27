@@ -277,7 +277,6 @@ class FiniteElement():
     '''
     Finite element manager of triangulation domains
     '''
-    
     def __init__(self, triangulation, basis):
         super().__init__()
         self.triangulation = triangulation
@@ -293,6 +292,7 @@ class FiniteElement():
         self.con_bc_operators = None
         self.env_bc_operators = None
 
+
     def get_domain_derivatives(self):
         domain_derivatives = []
         for domain_simplex in self.triangulation.simplices:
@@ -305,11 +305,14 @@ class FiniteElement():
     def diff(self, domain_rep, element, dim):
         return np.einsum('ij,j->i', self.domain_derivatives_list[1][element][dim], domain_rep)
     
+
     def all_diff(self, rep, dim):
         return np.array([self.diff(domain_rep, element, dim) for element, domain_rep in enumerate(rep)])
        
+
     def tp(self, domain_rep_1, domain_rep_2):
         return self.basis.tp(domain_rep_1, domain_rep_2)
+
 
     def fun2rep(self, fun, is_contravariants = None):
         rep = []
@@ -325,6 +328,20 @@ class FiniteElement():
         return np.array(rep)
 
 
+    def get_domain_basis_fun_overlap(self, fun, is_contravariants = None):
+        domain_basis_fun_overlap = []
+        for domain_simplex in self.triangulation.simplices:
+            domain = self.triangulation.points[domain_simplex]
+
+            def element_fun(u):
+                x = self.basis.transform(u, domain, to_bary = False, is_coordinate = True)
+                f = fun(x)
+                return self.basis.transform(f, domain, to_bary = True, is_contravariants = is_contravariants)
+            
+            domain_basis_fun_overlap.append(self.basis.basis_fun_overlap(element_fun))
+        return np.array(domain_basis_fun_overlap)
+
+
     def rep2fun(self, reps, is_contravariants = None):
         element_funs = [self.basis.element_rep2fun(rep) for rep in reps]
         domains = self.triangulation.points[self.triangulation.simplices]
@@ -334,7 +351,45 @@ class FiniteElement():
             u = self.basis.transform(x, domains[domain_idx], to_bary = True, is_coordinate = True)
             return self.basis.transform(element_funs[domain_idx](u), domains[domain_idx], to_bary = False, is_contravariants = is_contravariants)[0]
         return np.vectorize(fun)
+
+
+    @classmethod
+    def get_l_margin(cls, states, element, l_margins):
+        if element in l_margins:
+            return l_margins[element]
+        
+        if element == 0:
+            return np.ones(states.shape[-1])
+        else:
+            ll_margin = cls.get_l_margin(states, element - 1, l_margins)
+            l_margins[element] = np.einsum('i,rji->j', ll_margin, states[element - 1])
+            return l_margins[element]
+
+    @classmethod
+    def get_r_margin(cls, states, element, r_margins):
+        if element in r_margins:
+            return r_margins[element]
+        
+        if element == len(states) - 1:
+            return np.ones(states.shape[-1])
+        else:
+            rr_margin = cls.get_r_margin(states, element + 1, r_margins)
+            r_margins[element] = np.einsum('i,rij->j', rr_margin, states[element + 1])
+            return r_margins[element]
     
+
+    def mixed_rep2fun(self, states, is_contravariants = None):
+        l_margins = dict()
+        r_margins = dict()
+
+        marginalized_states = []
+        for i, state in enumerate(states):
+            l_margin = self.get_l_margin(states, i, l_margins)
+            r_margin = self.get_r_margin(states, i, r_margins)
+            marginalized_states.append(np.einsum('i,rji,j->r', l_margin, state, r_margin))
+        marginalized_states = np.array(marginalized_states)
+        return self.rep2fun(marginalized_states, is_contravariants)
+
 
     def get_neighbor_maps(self):
         neighbor_maps = []
@@ -352,7 +407,7 @@ class FiniteElement():
             else:
                 return self.basis.permuted_order_maps[x] 
         return np.apply_along_axis(fun, axis = -1, arr = self.neighbor_maps)
-    
+
 
     def get_element_neighbor_maps(self, element):
         neighbors = self.triangulation.neighbors[element]
@@ -399,7 +454,7 @@ class FiniteElement():
                 tmp = neighbor_derivatives_std_order[np.arange(self.triangulation.n)[:, None, None], 
                                                      np.arange(self.basis.d + 1)[None, :, None], 
                                                      ..., self.order_maps, :]
-                
+
                 neighbor_derivatives_dmn_order = np.moveaxis(tmp, 2, -2)
                 neighbor_side_derivatives = np.moveaxis(neighbor_derivatives_dmn_order[:, np.arange(self.basis.d + 1)[:, None], ... , self.basis.side_orders, :], [0, 1], [1, -2])
 
@@ -408,8 +463,14 @@ class FiniteElement():
                 n_shape = neighbor_side_derivatives.shape
                 n_shape = n_shape[:2] + (-1,) + n_shape[-1:]
 
-                d_con_bc_operators.append(domain_side_derivatives.reshape(d_shape))
-                n_con_bc_operators.append(neighbor_side_derivatives.reshape(n_shape))
+                domain_side_derivatives = domain_side_derivatives.reshape(d_shape)
+                d_norm = np.linalg.norm(domain_side_derivatives, axis = -1)
+                neighbor_side_derivatives = neighbor_side_derivatives.reshape(n_shape)
+                n_norm = np.linalg.norm(domain_side_derivatives, axis = -1)
+                norm = np.sqrt(d_norm * n_norm)[..., None]
+
+                d_con_bc_operators.append(domain_side_derivatives/norm)
+                n_con_bc_operators.append(neighbor_side_derivatives/norm)
         
             d_con_bc_operators = np.concatenate(d_con_bc_operators, axis = 2)
             n_con_bc_operators = np.concatenate(n_con_bc_operators, axis = 2)
@@ -439,11 +500,11 @@ class FiniteElement():
             subtraction_tensor[i, i, r] = 1
             subtraction_tensor[i, r, i] = -1
 
-        
         con_bc_operators = np.einsum('ijk,ndjp,ndkq->ndipq', subtraction_tensor, d_con_bc_operators, n_con_bc_operators)
         con_bc_operators = np.einsum('ndipq,ndijk->ndpqjk', con_bc_operators, con_bc_operators)
 
         self.con_bc_operators = con_bc_operators
+
 
     def set_u_shape(self, u_shape):
         self.u_shape = u_shape
@@ -471,7 +532,6 @@ class FiniteElement():
                             env_bc_cummulant += env_bc_derivative_cummulant
 
                     assert env_bc_cummulant is not None
-
                     
                     env_bc_operator = np.concatenate([env_bc_cummulant, -env_bc_vector], axis = -1).reshape((env_bc_cummulant.shape[0], -1))
 
