@@ -489,16 +489,16 @@ class FiniteElement():
         d_con_bc_operators = np.kron(np.eye(int(np.prod(self.u_shape))), self.d_con_bc_operators)
         n_con_bc_operators = np.kron(np.eye(int(np.prod(self.u_shape))), self.n_con_bc_operators)
 
-        d_con_bc_operators = scipy.linalg.block_diag(d_con_bc_operators, np.ones(d_con_bc_operators.shape[:-2] + (1, 1)))
-        n_con_bc_operators = scipy.linalg.block_diag(n_con_bc_operators, np.ones(n_con_bc_operators.shape[:-2] + (1, 1)))
+        d_con_bc_operators = scipy.linalg.block_diag(np.ones(d_con_bc_operators.shape[:-2] + (1, 1)), d_con_bc_operators)
+        n_con_bc_operators = scipy.linalg.block_diag(np.ones(n_con_bc_operators.shape[:-2] + (1, 1)), n_con_bc_operators)
 
         assert d_con_bc_operators.shape == n_con_bc_operators.shape
 
         r = d_con_bc_operators.shape[-2] - 1
         subtraction_tensor = np.zeros((r, r + 1, r + 1))
         for i in range(r):
-            subtraction_tensor[i, i, r] = 1
-            subtraction_tensor[i, r, i] = -1
+            subtraction_tensor[i, i + 1, 0] = 1
+            subtraction_tensor[i, 0, i + 1] = -1
 
         con_bc_operators = np.einsum('ijk,ndjp,ndkq->ndipq', subtraction_tensor, d_con_bc_operators, n_con_bc_operators)
         con_bc_operators = np.einsum('ndipq,ndijk->ndpqjk', con_bc_operators, con_bc_operators)
@@ -533,6 +533,6 @@ class FiniteElement():
 
                     assert env_bc_cummulant is not None
                     
-                    env_bc_operator = np.concatenate([env_bc_cummulant, -env_bc_vector], axis = -1).reshape((env_bc_cummulant.shape[0], -1))
+                    env_bc_operator = np.concatenate([-env_bc_vector, env_bc_cummulant], axis = -1).reshape((env_bc_cummulant.shape[0], -1))
 
                     self.env_bc_operators[element][neighbor_idx] = np.einsum('mi,mj->ij', env_bc_operator, env_bc_operator)

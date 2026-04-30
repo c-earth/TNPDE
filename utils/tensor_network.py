@@ -24,9 +24,23 @@ class TensorUnit():
         return self.tensor.shape
     
 
+    @property
+    def top_shape(self):
+        return self.shape[1:self.top_rank + 1]
+    
+    @property
+    def bot_shape(self):
+        return self.shape[self.rank - self.bot_rank + 1:]
+    
+    def copy(self):
+        return self.__class__(self.tensor.copy(), self.top_rank, self.lat_ranks, self.bot_rank)
+    
+
     def __mul__(self, other):
         assert type(other) == float
-        return self.__class__(self.tensor * other, self.top_rank, self.lat_ranks, self.bot_rank)
+        tensor = self.tensor.copy()
+        tensor[*([slice(None)] * self.top_rank + [slice(1, None)])] *= other
+        return self.__class__(tensor, self.top_rank, self.lat_ranks, self.bot_rank)
 
 
     def __rmul__(self, other):
@@ -34,20 +48,25 @@ class TensorUnit():
 
 
 class TensorComplex():
-    def __init__(self, domain_derivatives_list, tp_reduce):
+    def __init__(self, domain_derivatives_list, mul_reduce):
+        r = mul_reduce.shape[0]
+
         self.domain_derivatives_list = []
         for domain_derivatives in domain_derivatives_list:
-            shape = list(domain_derivatives.shape)
-            shape[-1] += 1
-            shape[-2] += 1
-            tmp = np.zeros(shape)
-            tmp[..., :-1, :-1] = domain_derivatives
-            tmp[..., -1, -1] = 1
-            self.domain_derivatives_list.append(tmp)
+            extended_domain_derivatives = np.zeros(domain_derivatives.shape[:-2] + (r + 1, r + 1))
+            extended_domain_derivatives[..., 1:, 1:] = domain_derivatives
+            extended_domain_derivatives[..., 0, 0] = 1
+            self.domain_derivatives_list.append(extended_domain_derivatives)
+        
+        self.mul_reduce = np.zeros([r + 1] * 3)
+        self.mul_reduce[1:, 1:, 1:] = mul_reduce
+        self.mul_reduce[0, 0, 0] = 1
 
-        self.tp_reduce = np.zeros([s + 1 for s in tp_reduce.shape])
-        self.tp_reduce[:-1, :-1, :-1] = tp_reduce
-
+        self.add_reduce = np.zeros([r + 1] * 3)
+        for i in range(r):
+            self.add_reduce[i + 1, i + 1, 0] = 1
+            self.add_reduce[i + 1, 0, i + 1] = 1
+        self.add_reduce[0, 0, 0] = 1
 
     def dif(self, tensor_unit, axes):
         s = [slice(None) if axis is None else axis for axis in axes]
@@ -63,7 +82,8 @@ class TensorComplex():
         return TensorUnit(dif_tensor, tensor_unit.top_rank + added_top_rank, tensor_unit.lat_ranks, tensor_unit.bot_rank)
 
 
-    def tpm(self, tensor_unit_1, tensor_unit_2):
+    @staticmethod
+    def tpm(tensor_unit_1, tensor_unit_2):
         f_indices = string.ascii_letters[:tensor_unit_1.rank + 1]
         tpm_tensor = np.einsum(f'{f_indices},{f_indices[0]}...->{f_indices}...',
                                tensor_unit_1.tensor,
@@ -105,70 +125,57 @@ class TensorComplex():
 
     
     def mul(self, tensor_unit_1, tensor_unit_2):
+        if type(tensor_unit_1) == float or type(tensor_unit_2) == float:
+            return tensor_unit_1 * tensor_unit_2
+        else:
+            assert len(tensor_unit_1.lat_ranks) == len(tensor_unit_2.lat_ranks)
+
+            tp_unit = self.tpm(tensor_unit_1, tensor_unit_2)
+            mul_tensor = np.einsum('ijk,jk...->i...',
+                                self.mul_reduce,
+                                np.moveaxis(tp_unit.tensor, [tensor_unit_1.top_rank, tp_unit.top_rank], [0, 1]))
+            mul_tensor = np.moveaxis(mul_tensor, 0, tp_unit.top_rank - 1)
+            return TensorUnit(mul_tensor, tp_unit.top_rank - 1, tp_unit.lat_ranks, tp_unit.bot_rank)
+
+    def add(self, tensor_unit_1, tensor_unit_2):
+        assert tensor_unit_1.top_shape == tensor_unit_2.top_shape
         assert len(tensor_unit_1.lat_ranks) == len(tensor_unit_2.lat_ranks)
 
         tp_unit = self.tpm(tensor_unit_1, tensor_unit_2)
-        mul_tensor = np.einsum('ijk,jk...->i...',
-                               self.tp_reduce,
+        add_tensor = np.einsum('ijk,jk...->i...',
+                               self.add_reduce,
                                np.moveaxis(tp_unit.tensor, [tensor_unit_1.top_rank, tp_unit.top_rank], [0, 1]))
-        mul_tensor = np.moveaxis(mul_tensor, 0, tp_unit.top_rank - 1)
-        return TensorUnit(mul_tensor, tp_unit.top_rank - 1, tp_unit.lat_ranks, tp_unit.bot_rank)
-    
+        add_tensor = np.moveaxis(add_tensor, 0, tp_unit.top_rank - 1)
+        return TensorUnit(add_tensor, tp_unit.top_rank - 1, tp_unit.lat_ranks, tp_unit.bot_rank)
 
-    def add(self, tensor_units):
-        # assume all bot_rank contract to a power of state self tensor product
-        tensor_units_dict = dict()
-        for tensor_unit in tensor_units:
-            assert tensor_unit.top_rank == tensor_units[0].top_rank
-            assert len(tensor_unit.lat_ranks) == len(tensor_units[0].lat_ranks)
-            assert sum(tensor_unit.lat_ranks) == sum(tensor_units[0].lat_ranks)
-            tensor_units_dict[tensor_unit.bot_rank] = tensor_units_dict.get(tensor_unit.bot_rank, []) + [tensor_unit]
+    # @classmethod
+    # def add(cls, tensor_units):
+    #     # assume all units contract their bottom ranks to a tensor product power of the state 
+    #     for tensor_unit in tensor_units:
+    #         assert tensor_unit.top_shape == tensor_units[0].top_shape
+    #         assert len(tensor_unit.lat_ranks) == len(tensor_units[0].lat_ranks)
 
-        add_tensor_powers = dict()
-        for bot_rank, tensor_power_units in tensor_units_dict.items():
-        
-            shape = list(tensor_power_units[0].shape[:tensor_power_units[0].top_rank + 1])
-            slices = [[slice(None)] * (tensor_power_units[0].top_rank + 1) for _ in tensor_power_units]
-            for r in range(tensor_power_units[0].top_rank + 1, tensor_power_units[0].rank - tensor_power_units[0].bot_rank + 1):
-                s = 0
-                for j, tensor_power_unit in enumerate(tensor_power_units):
-                    new_s = s + tensor_power_unit.shape[r]
-                    slices[j].append(slice(s, new_s))
-                    s = new_s
-                shape.append(s)
+    #     r = np.prod(tensor_units[0].top_shape)
+    #     selecting_add_tensor = np.zeros((r,) + (r + 1,) * len(tensor_units))
 
-            shape += list(tensor_power_units[0].shape[tensor_power_units[0].rank - tensor_power_units[0].bot_rank + 1:])
-            slices = [s + [slice(None)] * tensor_power_units[0].bot_rank for s in slices]
-            add_tensor_power = np.zeros(shape)
-            
-            for j, tensor_power_unit in enumerate(tensor_power_units):
-                add_tensor_power[*slices[j]] = tensor_power_unit.tensor
-            
-            add_tensor_powers[bot_rank] = add_tensor_power
+    #     tp = None
+    #     for i, tensor_unit in enumerate(tensor_units):
+    #         if tp is None:
+    #             tp = tensor_unit
+    #         else:
+    #             tp = cls.tpm(tp, tensor_unit)
+    #         for j in range(r):
+    #             indices = [j] + [0] * len(tensor_units)
+    #             indices[i] = j + 1
+    #             selecting_add_tensor[*indices] = 1
 
-        bot_ranks = sorted(list(add_tensor_powers.keys()))
-        shape = list(add_tensor_powers[bot_ranks[0]].shape[:tensor_power_units[0].top_rank + 1])
-        slices = [[slice(None)] * (tensor_power_units[0].top_rank + 1) for _ in add_tensor_powers]
-        
-        s_bot = 0
-        s_lats = [0] * len(tensor_units[0].lat_ranks)
+    #     f_script = f'{string.ascii_letters[:len(tensor_units) + 1]}'
+    #     add_half_tensor = np.einsum(f'{f_script},n{f_script[1:]}...->n{f_script[0]}...', selecting_add_tensor, tp.tensor)
 
-        bot_size = add_tensor_powers[bot_ranks[-1]].shape[-1] # always assume to have at least a `u` in the pde
-        for j, bot_rank in enumerate(bot_ranks):
-            new_s_bot = s_bot + bot_size ** bot_rank
-            new_s_lats = [s_lat + t_lat for s_lat, t_lat in zip(s_lats, add_tensor_powers[bot_rank].shape[tensor_units[0].top_rank + 1:])]
-            slices[j] += [slice(s_lat, new_s_lat) for s_lat, new_s_lat in zip(s_lats, new_s_lats)] + [slice(s_bot, new_s_bot)]
-            s_bot = new_s_bot
-            s_lats = new_s_lats
+        # return TensorUnit(add_tensor, tensor_units[0].top_rank, tensor_units[0].lat_ranks)
 
-        add_tensor = np.zeros(shape + s_lats + [s_bot])
-        for j, bot_rank in enumerate(bot_ranks):
-            add_tensor[*slices[j]] = add_tensor_powers[bot_rank].reshape(add_tensor_powers[bot_rank].shape[:tensor_units[0].rank - tensor_units[0].bot_rank + 1] + (-1,))
-
-        return TensorUnit(add_tensor, tensor_power_units[0].top_rank, tensor_units[0].lat_ranks, 1)
-
-
-    def wrap_lat(self, tensor_unit):
+    @staticmethod
+    def wrap_lat(tensor_unit):
         lat_shape = []
         s = tensor_unit.top_rank + 1
         for lat_rank in tensor_unit.lat_ranks:
@@ -184,6 +191,7 @@ class TensorNetwork():
     def __init__(self, basis_rank, neighbors, domain_derivatives_list, tp_reduce):
 
         self.states = None
+        self._shape = None
         self.operators = None
         self.solver = None
         self.bond_order = None
@@ -194,6 +202,7 @@ class TensorNetwork():
         self.u_shape = None
         self.dummy_u = None
         self.p = None
+        self.g = None
 
     def set_bond_order(self, bond_order):
         assert type(bond_order) == int and bond_order > 0
@@ -209,22 +218,26 @@ class TensorNetwork():
         self.dummy_u = TensorUnit(np.broadcast_to(dummy_u_tensor, (len(self.neighbors),) + dummy_u_tensor.shape), len(self.u_shape) + 1, [1] * len(self.neighbors[0]), 1)
 
     def set_h_tensor_units(self, h_tensor_units):
+        self.h_tensor_units = []
         for h_tensor_unit in h_tensor_units:
             assert type(h_tensor_unit) == TensorUnit
-        self.h_tensor_units = h_tensor_units
+            shape = list(h_tensor_unit.shape)
+            shape[h_tensor_unit.top_rank] = 1
+            tmp_h_tensor = np.concatenate([np.ones(shape), h_tensor_unit.tensor], axis = h_tensor_unit.top_rank)
+            self.h_tensor_units.append(TensorUnit(tmp_h_tensor, h_tensor_unit.top_rank, h_tensor_unit.lat_ranks, h_tensor_unit.bot_rank))
 
 
     def get_operators_from_basis_interpolation(self, basis_overlap, domain_basis_fun_overlap):
         r = domain_basis_fun_overlap.shape[-1]
-        subtraction_tensor = np.zeros((r + 1, r + 1, r + 1))
+        subtraction_tensor = np.zeros((r, r + 1, r + 1))
         for i in range(r):
-            subtraction_tensor[i, i, r] = 1
-            subtraction_tensor[i, r, i] = -1
-        subtraction_tensor[r, r, r] = 1
+            subtraction_tensor[i, i + 1, 0] = 1
+            subtraction_tensor[i, 0, i + 1] = -1
 
         extend_basis_overlap = np.zeros((r + 1, r + 1))
-        extend_basis_overlap[:r, :r] = basis_overlap
-        extend_domain_basis_fun_overlap = np.concatenate([domain_basis_fun_overlap, np.ones(domain_basis_fun_overlap.shape[:-1] + (1,))], axis = -1)
+        extend_basis_overlap[1:, 1:] = basis_overlap
+        extend_basis_overlap[0, 0] = 1
+        extend_domain_basis_fun_overlap = np.concatenate([np.ones(domain_basis_fun_overlap.shape[:-1] + (1,)), domain_basis_fun_overlap], axis = -1)
 
         interpolation_tensor = np.einsum('ijk,jl,nk->nil', subtraction_tensor, extend_basis_overlap, extend_domain_basis_fun_overlap)
         interpolation_operators = np.einsum('nil,nim->nlm', interpolation_tensor, interpolation_tensor)
@@ -232,13 +245,16 @@ class TensorNetwork():
 
 
     def get_operators_from_pde(self, pde, delta, previous_states):
-        self.p = previous_states
-        if type(pde) == list and pde[0] == '+':
-            completed_pde = pde + [['*', -1/delta, 'u'], ['*', 1/delta, 'p']]
-        else:
-            completed_pde = ['+', pde, ['*', -1/delta, 'u'], ['*', 1/delta, 'p']]
-        pde_tensor = self.get_pde_tensor(completed_pde)
-        return self.tensor_complex.wrap_lat(TensorUnit(np.einsum('nijkl,nipqr->nljpkqr', pde_tensor.tensor, pde_tensor.tensor), 1, [2, 2], 1))
+        shape = list(previous_states.shape)
+        shape[previous_states.top_rank] = 1
+        tmp_p_tensor = np.concatenate([np.ones(shape), previous_states.tensor], axis = previous_states.top_rank)
+        self.p = TensorUnit(tmp_p_tensor, previous_states.top_rank, previous_states.lat_ranks, previous_states.bot_rank)
+
+        self.g = 1/delta
+        pde_tensor = self.get_pde_tensor(pde)
+        # return pde_tensor, pde_tensor.bot_rank
+        pde_tensor_flat_bot = pde_tensor.tensor.reshape(pde_tensor.shape[:pde_tensor.rank - pde_tensor.bot_rank + 1] + (-1,))
+        return self.tensor_complex.wrap_lat(TensorUnit(np.einsum('nijkl,nipqr->nljpkqr', pde_tensor_flat_bot, pde_tensor_flat_bot), 1, [2, 2], 1)), pde_tensor.bot_rank
 
 
     def get_pde_tensor(self, pde):
@@ -259,40 +275,50 @@ class TensorNetwork():
                 terms = [self.get_pde_tensor(term) for term in pde[1:]]
                 product = terms[0]
                 for term in terms[1:]:
-                    if type(product) == float or type(term) == float:
-                        product = product * term
-                    else:
-                        product = self.tensor_complex.mul(product, term)
-                        product = self.tensor_complex.wrap_lat(product)
+                    product = self.tensor_complex.mul(product, term)
+                    product = self.tensor_complex.wrap_lat(product)
                 return product
             elif pde[0] == '+':
                 terms = [self.get_pde_tensor(term) for term in pde[1:]]
+                total = None
                 for term in terms:
                     assert type(term) == TensorUnit
-                return self.tensor_complex.add(terms)
+                    if total is None:
+                        total = term
+                    else:
+                        total = self.tensor_complex.add(total, term)
+                        total = self.tensor_complex.wrap_lat(total)
+                return total
         elif pde == 'u':
             return self.dummy_u
         elif pde == 'p':
             return self.p
+        elif pde == 'g':
+            return self.g
         else:
             raise TypeError()
 
-    def set_operators(self, operators):
+    def set_operators(self, operators, pde_power):
         assert type(operators) == TensorUnit
         self.operators = operators
+        self.pde_power = pde_power
 
     def set_states(self, states, bond_order):
+        assert type(states) == TensorUnit
         self.set_bond_order(bond_order)
-        self.states = TensorUnit(states, 1, self.neighbors.shape[-1] * [1], 0)
+        self._shape = states.shape
+        self.states = TensorUnit(states.tensor.reshape((states.shape[0], -1) + (bond_order,) * len(states.lat_ranks)), 1, states.lat_ranks, 0)
 
     def set_solver(self, solver):
         self.solver = solver
 
-    def set_bcs(self, con_bc_operators, env_bc_operators):
+    def set_bcs(self, con_bc_operators, env_bc_operators, bc_power):
         self.con_bc_operators = con_bc_operators
         self.env_bc_operators = env_bc_operators
+        self.bc_power = bc_power
 
-    def solve(self, rounds, alpha , env, pde = (False, [])):
-        self.solver.add_system(self.bond_order, self.neighbors, self.states, self.operators, self.con_bc_operators, self.env_bc_operators, alpha)
-        return self.solver.solve(rounds, starting_element = 1, starting_direction = 0, env = env, pde = pde)
+    def solve(self, rounds, alpha , env):
+        self.solver.add_system(self.bond_order, self.neighbors, self.states, self.operators, self.pde_power, self.con_bc_operators, self.env_bc_operators, self.bc_power, alpha)
+        states_opt = self.solver.solve(rounds, starting_element = 0, starting_direction = 0, env = env)
+        return TensorUnit(states_opt.tensor.reshape(self._shape), len(self._shape) - len(states_opt.lat_ranks) - 1, states_opt.lat_ranks, 0)
     
