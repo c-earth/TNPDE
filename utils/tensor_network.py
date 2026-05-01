@@ -147,32 +147,7 @@ class TensorComplex():
                                np.moveaxis(tp_unit.tensor, [tensor_unit_1.top_rank, tp_unit.top_rank], [0, 1]))
         add_tensor = np.moveaxis(add_tensor, 0, tp_unit.top_rank - 1)
         return TensorUnit(add_tensor, tp_unit.top_rank - 1, tp_unit.lat_ranks, tp_unit.bot_rank)
-
-    # @classmethod
-    # def add(cls, tensor_units):
-    #     # assume all units contract their bottom ranks to a tensor product power of the state 
-    #     for tensor_unit in tensor_units:
-    #         assert tensor_unit.top_shape == tensor_units[0].top_shape
-    #         assert len(tensor_unit.lat_ranks) == len(tensor_units[0].lat_ranks)
-
-    #     r = np.prod(tensor_units[0].top_shape)
-    #     selecting_add_tensor = np.zeros((r,) + (r + 1,) * len(tensor_units))
-
-    #     tp = None
-    #     for i, tensor_unit in enumerate(tensor_units):
-    #         if tp is None:
-    #             tp = tensor_unit
-    #         else:
-    #             tp = cls.tpm(tp, tensor_unit)
-    #         for j in range(r):
-    #             indices = [j] + [0] * len(tensor_units)
-    #             indices[i] = j + 1
-    #             selecting_add_tensor[*indices] = 1
-
-    #     f_script = f'{string.ascii_letters[:len(tensor_units) + 1]}'
-    #     add_half_tensor = np.einsum(f'{f_script},n{f_script[1:]}...->n{f_script[0]}...', selecting_add_tensor, tp.tensor)
-
-        # return TensorUnit(add_tensor, tensor_units[0].top_rank, tensor_units[0].lat_ranks)
+        
 
     @staticmethod
     def wrap_lat(tensor_unit):

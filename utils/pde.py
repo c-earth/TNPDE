@@ -1,17 +1,8 @@
 class PDE():
-    '''
-    `pde_txt` example:
-    1. 5: `5`
-    2. 8x: `8*h_0` where `hs[0] = lambda *x: x[0]`
-    3. du/dx: `D[1, 0]` or `D[1]` (for 1D problem)
-    5. u+9du/dy: `u+9*D[1, 1]`
-    6. 8(u+x-y): `8*(u+h_0+-1*h_1)` where `hs[0] = lambda *x: x[0]`, and `hs[1] = lambda *x: x[1]`
-    '''
     operators = set('+*()')
 
     def __init__(self, pde_txt, equal_time_derivative = False):
         super().__init__()
-        # shape must be tuple/list not array/tensor
         self.pde_txt = pde_txt
         self.equal_time_derivative = equal_time_derivative
         self.pde = self.parse(self.pde_txt, self.equal_time_derivative)
