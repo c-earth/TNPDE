@@ -5,10 +5,6 @@ from scipy.spatial import Delaunay
 
 
 class Nodes():
-    '''
-    Triangulation Node
-    '''
-
     def __init__(self, points):
         self.points, self.idxs_inverse = self.process_points(points)
 
@@ -42,10 +38,6 @@ class Nodes():
     
 
 class Delaunay1D():
-    '''
-    Delaunay for unique points in 1D
-    '''
-
     def __init__(self, points):
         self.points = points
         self.idxs = np.argsort(self.points.reshape(-1))
@@ -61,10 +53,6 @@ class Delaunay1D():
 
 
 class Triangulation():
-    '''
-    Extend Scipy`s Delaunay to handle 1D
-    '''
-    
     def __init__(self, points):
         super().__init__()
 
@@ -103,37 +91,27 @@ class Triangulation():
     def neighbors(self):
         return self.delaunay.neighbors
     
-    @property
-    def reversed_neighbor_idxs(self):
-        reversed_neighbor_idxs = - np.ones(self.neighbors.shape)
-        for element, element_neighbors in enumerate(self.neighbors):
-            for i, element_neighbor in enumerate(element_neighbors):
-                if element_neighbor != -1:
-                    found = False
-                    for reversed_neighbor_idx, reversed_neighbor in enumerate(self.neighbors[element_neighbor]):
-                        if element == reversed_neighbor:
-                            found = True
-                            reversed_neighbor_idxs[element, i] = reversed_neighbor_idx
-                            break
-                    if not found:
-                        raise ValueError(f'not matching neighbor for element {element}')
-
-        return reversed_neighbor_idxs
-    
 
     def find_simplex(self, x):
         return self.delaunay.find_simplex(x)
     
-    def visualize(self):
+    def visualize(self, highlight_point = None, highlight_element = None):
         if self.d == 1:
             plt.figure()
             plt.plot(self.points, np.zeros(self.points.shape))
             plt.plot(self.points, np.zeros(self.points.shape), 'o')
+            if highlight_element is not None:
+                xs = highlight_point[:, 0]
+                plt.scatter(xs, np.zeros(xs.shape), marker = 'o', color = 'r', s = 50)
+                plt.scatter(self.points[self.simplices[highlight_element]], np.zeros(self.points[self.simplices[highlight_element]].shape), marker = 's', s = 100, c = 'm')
             plt.show()
         elif self.d == 2:
             plt.figure()
             plt.triplot(self.points[:, 0], self.points[:, 1], self.simplices)
             plt.plot(self.points[:, 0], self.points[:, 1], 'o')
+            if highlight_element is not None:
+                plt.scatter(highlight_point[:, 0], highlight_point[:, 1], marker = 'o', color = 'r', s = 50)
+                plt.scatter(self.points[self.simplices[highlight_element]][:, 0], self.points[self.simplices[highlight_element]][:, 1], marker = 's', s = 100, c = 'm')
             plt.show()
         else:
             raise NotImplementedError()
