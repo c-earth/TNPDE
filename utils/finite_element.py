@@ -5,12 +5,10 @@ import numpy as np
 import scipy
 from scipy import integrate
 import matplotlib.pyplot as plt
+from matplotlib import cm
 
 
 class Basis():
-    '''
-    Base class of element basis in Barycentric coordinate
-    '''
     def __init__(self, d, domain_rank):
         super().__init__()
 
@@ -177,30 +175,38 @@ class Basis():
                 plt.plot(x, fun(x))
             plt.show()
         elif self.d == 2:
-            xs, ys = np.meshgrid(np.linspace(0, 1, n), np.linspace(0, 1, n))
-            fig, axs = plt.subplots(self.domain_rank + 1, self.domain_rank + 1, figsize = ((self.domain_rank + 1)*2, (self.domain_rank + 1)*2))
+            X, Y = np.meshgrid(np.linspace(0, 1, n), np.linspace(0, 1, n))
+            fig, axs = plt.subplots(self.domain_rank + 1, self.domain_rank + 1, subplot_kw = {'projection': '3d', 'proj_type': 'ortho'}, figsize = ((self.domain_rank + 1)*3, (self.domain_rank + 1)*3))
             for ax in axs.ravel():
                 ax.set_axis_off()
-            for i, fun in enumerate(self.basis_funs):
-                ax = axs[*self.order2bcp[i]]
+            for fun, bcp in zip(self.basis_funs, self.order2bcp):
+                ax = axs[*bcp]
+                ax.set_axis_on()
 
-                zs = np.array([[fun(point)[0] if point[0] >= 0 and point[1] >= 0 and np.sum(point) <= 1 else 0 for point in zip(xr, yr)] for xr, yr in zip(xs, ys)])
-                zs = zs.reshape((n, n)).T
-                im = ax.imshow(zs, cmap = 'jet', interpolation = 'nearest', vmin = -1, vmax = 1.5, aspect='auto')
-                ax.get_xaxis().set_ticks([])
-                ax.get_yaxis().set_ticks([])
-            fig.subplots_adjust(right = 0.9)
-            cbar_ax = fig.add_axes([0.95, 0.1, 0.03, 0.8])
-            fig.colorbar(im, cax=cbar_ax)
+                X = np.arange(0, 1, 0.01)
+                Y = np.arange(0, 1, 0.01)
+                X, Y = np.meshgrid(X, Y)
+                x = np.stack([X, Y], axis = -1)
+                x = x[x[..., 0] + x[..., 1] <= 1]
+                x = x.reshape((-1,) + x.shape[-1:])
+
+                z = fun(x)
+
+                ax.plot_trisurf(x[:, 0], x[:, 1], z, cmap = cm.jet, linewidth = 0, antialiased = False, vmin = -1, vmax = 1.5)
+                ax.set_title(f'bcp: {bcp}')
+                ax.set_xlabel(r'$x$')
+                ax.get_xaxis().set_ticks([0, 1])
+                ax.set_ylabel(r'$y$')
+                ax.get_yaxis().set_ticks([0, 1])
+                ax.get_zaxis().set_ticks([-1, 0, 1, 1.5])
+
+            fig.subplots_adjust(wspace = 0.2, hspace = 0.2)
             fig.show()
         else:
             raise NotImplementedError()
 
 
 class LagrangeBasis(Basis):
-    '''
-    Lagrange orthogonal polynomial basis
-    '''
     def __init__(self, d, domain_rank, mock = False):
         if not mock:
             super().__init__(d, domain_rank)
@@ -274,9 +280,6 @@ class LagrangeBasis(Basis):
         
 
 class FiniteElement():
-    '''
-    Finite element manager of triangulation domains
-    '''
     def __init__(self, triangulation, basis):
         super().__init__()
         self.triangulation = triangulation

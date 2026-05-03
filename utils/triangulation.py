@@ -100,7 +100,7 @@ class Triangulation():
             plt.figure()
             plt.plot(self.points, np.zeros(self.points.shape))
             plt.plot(self.points, np.zeros(self.points.shape), 'o')
-            if highlight_element is not None:
+            if highlight_element is not None and highlight_element != -1:
                 xs = highlight_point[:, 0]
                 plt.scatter(xs, np.zeros(xs.shape), marker = 'o', color = 'r', s = 50)
                 plt.scatter(self.points[self.simplices[highlight_element]], np.zeros(self.points[self.simplices[highlight_element]].shape), marker = 's', s = 100, c = 'm')
@@ -109,7 +109,7 @@ class Triangulation():
             plt.figure()
             plt.triplot(self.points[:, 0], self.points[:, 1], self.simplices)
             plt.plot(self.points[:, 0], self.points[:, 1], 'o')
-            if highlight_element is not None:
+            if highlight_element is not None and highlight_element != -1:
                 plt.scatter(highlight_point[:, 0], highlight_point[:, 1], marker = 'o', color = 'r', s = 50)
                 plt.scatter(self.points[self.simplices[highlight_element]][:, 0], self.points[self.simplices[highlight_element]][:, 1], marker = 's', s = 100, c = 'm')
             plt.show()
