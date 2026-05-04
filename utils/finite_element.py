@@ -126,7 +126,9 @@ class Basis():
     def overlap(self, *funss):
         overlap_tensor = np.empty([len(funs) for funs in funss], dtype = float)
         for idxs in np.ndindex(overlap_tensor.shape):
-            overlap_tensor[idxs] = integrate.nquad(lambda *x: np.prod([funss[i][idx](x) for i, idx in enumerate(idxs)]), self.ranges)[0]
+            def fun(*x):
+                return np.prod([funss[i][idx](x) for i, idx in enumerate(idxs)])
+            overlap_tensor[idxs] = integrate.nquad(fun, self.ranges)[0]
         return overlap_tensor
     
     
@@ -167,11 +169,11 @@ class Basis():
         return lambda x: sum([r * basis_fun(x) for r, basis_fun in zip(rep, self.basis_funs)])
     
 
-    def visualize(self, n = 100):
+    def visualize(self, n = 100, derivative = False, dim = 0):
         if self.d == 1:
             x = np.linspace(0, 1, n)
             plt.figure()
-            for fun in self.basis_funs:
+            for fun in self.basis_ders[dim] if derivative else self.basis_funs:
                 plt.plot(x, fun(x))
             plt.show()
         elif self.d == 2:
@@ -179,7 +181,7 @@ class Basis():
             fig, axs = plt.subplots(self.domain_rank + 1, self.domain_rank + 1, subplot_kw = {'projection': '3d', 'proj_type': 'ortho'}, figsize = ((self.domain_rank + 1)*3, (self.domain_rank + 1)*3))
             for ax in axs.ravel():
                 ax.set_axis_off()
-            for fun, bcp in zip(self.basis_funs, self.order2bcp):
+            for fun, bcp in zip(self.basis_ders[dim] if derivative else self.basis_funs, self.order2bcp):
                 ax = axs[*bcp]
                 ax.set_axis_on()
 
@@ -200,6 +202,7 @@ class Basis():
                 ax.get_yaxis().set_ticks([0, 1])
                 ax.get_zaxis().set_ticks([-1, 0, 1, 1.5])
 
+            fig.suptitle(f'First derivative of basis functions against {dim}th coordinate' if derivative else 'Basis functions')
             fig.subplots_adjust(wspace = 0.2, hspace = 0.2)
             fig.show()
         else:
@@ -225,12 +228,12 @@ class LagrangeBasis(Basis):
         def fun(x):
             x = self.domain_rank * np.array(x).reshape((-1, self.d))
             x0 = self.domain_rank - x.sum(axis = 1)
+            b0 = self.domain_rank - bcp.sum()
+
             out = np.ones(x.shape[0])
             for i in range(self.d):
                 for c in range(bcp[i]):
                     out *= (x[:, i] - c) / (bcp[i] - c)
-
-            b0 = self.domain_rank - bcp.sum()
             for c in range(b0):
                 out *= (x0 - c) / (b0 - c)
             return out
@@ -239,7 +242,6 @@ class LagrangeBasis(Basis):
     def get_basis_funs(self):
         return [self.get_basis_fun(bcp) for bcp in self.order2bcp]
     
-
     def get_basis_der(self, bcp, dim):
         def der(x):
             x = self.domain_rank * np.array(x).reshape((-1, self.d))
@@ -253,15 +255,16 @@ class LagrangeBasis(Basis):
                         out *= (x[:, i] - c) / (bcp[i] - c)
 
             out_dim = np.zeros(x.shape[0])
+
             for is_b0, c_dim in zip(bcp[dim] * [0] + b0 * [1], list(range(bcp[dim])) + list(range(b0))):
                 out_tmp = np.ones(x.shape[0])
 
-                for c in range(bcp[i]):
+                for c in range(bcp[dim]):
                     if is_b0 or c != c_dim:
-                        out_tmp *= (x[:, i] - c) 
+                        out_tmp *= (x[:, dim] - c) 
                     else:
                         out_tmp *= self.domain_rank
-                    out_tmp /= (bcp[i] - c)
+                    out_tmp /= (bcp[dim] - c)
 
                 for c in range(b0):
                     if (not is_b0) or c != c_dim:
@@ -354,44 +357,6 @@ class FiniteElement():
             u = self.basis.transform(x, domains[domain_idx], to_bary = True, is_coordinate = True)
             return self.basis.transform(element_funs[domain_idx](u), domains[domain_idx], to_bary = False, is_contravariants = is_contravariants)[0]
         return np.vectorize(fun)
-
-
-    @classmethod
-    def get_l_margin(cls, states, element, l_margins):
-        if element in l_margins:
-            return l_margins[element]
-        
-        if element == 0:
-            return np.ones(states.shape[-1])
-        else:
-            ll_margin = cls.get_l_margin(states, element - 1, l_margins)
-            l_margins[element] = np.einsum('i,rji->j', ll_margin, states[element - 1])
-            return l_margins[element]
-
-    @classmethod
-    def get_r_margin(cls, states, element, r_margins):
-        if element in r_margins:
-            return r_margins[element]
-        
-        if element == len(states) - 1:
-            return np.ones(states.shape[-1])
-        else:
-            rr_margin = cls.get_r_margin(states, element + 1, r_margins)
-            r_margins[element] = np.einsum('i,rij->j', rr_margin, states[element + 1])
-            return r_margins[element]
-    
-
-    def mixed_rep2fun(self, states, is_contravariants = None):
-        l_margins = dict()
-        r_margins = dict()
-
-        marginalized_states = []
-        for i, state in enumerate(states):
-            l_margin = self.get_l_margin(states, i, l_margins)
-            r_margin = self.get_r_margin(states, i, r_margins)
-            marginalized_states.append(np.einsum('i,rji,j->r', l_margin, state, r_margin))
-        marginalized_states = np.array(marginalized_states)
-        return self.rep2fun(marginalized_states, is_contravariants)
 
 
     def get_neighbor_maps(self):
