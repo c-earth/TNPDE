@@ -177,7 +177,7 @@ class TensorNetwork():
         self.u_shape = None
         self.dummy_u = None
         self.p = None
-        self.g = None
+        self.t = None
 
     def set_bond_order(self, bond_order):
         assert type(bond_order) == int and bond_order > 0
@@ -225,9 +225,8 @@ class TensorNetwork():
         tmp_p_tensor = np.concatenate([np.ones(shape), previous_states.tensor], axis = previous_states.top_rank)
         self.p = TensorUnit(tmp_p_tensor, previous_states.top_rank, previous_states.lat_ranks, previous_states.bot_rank)
 
-        self.g = 1/delta
+        self.t = delta
         pde_tensor = self.get_pde_tensor(pde)
-        # return pde_tensor, pde_tensor.bot_rank
         pde_tensor_flat_bot = pde_tensor.tensor.reshape(pde_tensor.shape[:pde_tensor.rank - pde_tensor.bot_rank + 1] + (-1,))
         return self.tensor_complex.wrap_lat(TensorUnit(np.einsum('nijkl,nipqr->nljpkqr', pde_tensor_flat_bot, pde_tensor_flat_bot), 1, [2, 2], 1)), pde_tensor.bot_rank
 
@@ -268,8 +267,8 @@ class TensorNetwork():
             return self.dummy_u
         elif pde == 'p':
             return self.p
-        elif pde == 'g':
-            return self.g
+        elif pde == 't':
+            return self.t
         else:
             raise TypeError()
 

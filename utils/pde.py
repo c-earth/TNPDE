@@ -76,7 +76,12 @@ class PDE():
             parsed = cls.parse(pde_txt)
             if not (type(parsed) == list and parsed[0] == '+'):
                 parsed = ['+', parsed]
-            return parsed + [['*', 'g', 'u', -1.0], ['*', 'g', 'p']]
+            for i, term in enumerate(parsed[1:]):
+                if type(term) == list and term[0] == '*':
+                    term.append('t')
+                else:
+                    parsed[i + 1] = ['*', term, 't']
+            return parsed + [['*', 'u', -1.0], 'p']
         else:
             pde_txt = pde_txt.replace(' ', '')
             if pde_txt == '':
