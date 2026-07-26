@@ -1,1 +1,5 @@
 _legacy/
+utils/__pycache__/
+*.ipynb
+*.png
+test.py
